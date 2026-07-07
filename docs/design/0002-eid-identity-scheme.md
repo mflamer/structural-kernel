@@ -1,8 +1,7 @@
 # 0002 — Deterministic Element Identity: Anchors, Correspondence, and Hierarchy
 
-**Status:** Proposal, awaiting product-owner review. Graduates to ADR 0005 if it
-survives. Per review R1, **derivation implementation for the milestone structure is
-gated on this document being accepted.**
+**Status:** Accepted 2026-07-07 (`0002-review.md`), revisions E1–E3 applied same day.
+Graduated to ADR 0005; the R1 gate on derivation implementation is lifted.
 **Scope:** the eid grammar, the anchor scheme that keeps eids stable under edits, the
 gridline-move resolution R1 requires, split correspondence semantics for overrides vs.
 diffs, dangling behavior for each eid consumer, and hierarchical component identity
@@ -31,11 +30,23 @@ An eid is a `/`-separated path of segments; each segment is
 `{role}:{inducer}:{anchor}`:
 
 ```
+# Rendered form — display names substituted for human reading; never persisted:
 jst:01JXF:B-C.g2+03          the 4th joist (ordinal 03, zero-based) in bay B-C,
                              counted from grid line g2, induced by decision 01JXF
 jst:01JXF:B-C.g2+03/conn:br0:end-g2     that joist's connection at its g2 end
 jst:01JXF:B-C.g2+03/conn:br0:end-g2/fst:nl1:02   the 3rd fastener in that connection
+
+# Canonical form of the first eid — persisted, hashed, diffed; embeds stable
+# line-ids (§3), never display names:
+jst:01JXF:LN4QF2-LN4QG8.LN4QHC+03
 ```
+
+**Canonical vs. rendered (E1):** the canonical, persisted eid — the form that is
+hashed, diffed, and referenced by overrides, exceptions, and intent — embeds stable
+sub-identities only: line-ids, topological names, ordinals. Display names appear
+solely in a separate human-rendering transform applied at the presentation boundary
+(exactly like units, ADR 0002: presentation, never stored). If display names were
+persisted, rename invariance (test 3) and content-address stability would both fail.
 
 - **`role`** — a short kind tag from the derivation vocabulary (`jst`, `bm`, `pst`,
   `hdr`, `wallseg`, `conn`, `fst`, ...). Adding roles is a derivation-rule concern,
@@ -63,10 +74,13 @@ The anchor vocabulary, in order of preference per rule type:
 2. **Named topological positions** — `end-g2`, `mid`, `over-pst:...` — for children
    whose position is defined by the parent's topology.
 3. **Ordinals from a named edge**, only where nothing better exists: joists within a
-   bay are counted from the lower-sorted bounding line-id, in layout order. Ordinals
-   are the weakest anchor and are deliberately scoped: an ordinal appears only in the
-   final position of a segment's anchor, so its blast radius is one rule instance in
-   one bay.
+   bay are counted from a bounding line chosen by a sort key that is **the line-id
+   token itself** (lexicographic) — invariant under every geometric and presentation
+   edit; never spatial position, never display name (E2). A gridline move that
+   reorders lines spatially (B moved east past C) therefore cannot flip the counting
+   origin. Ordinals are the weakest anchor and are deliberately scoped: an ordinal
+   appears only in the final position of a segment's anchor, so its blast radius is
+   one rule instance in one bay.
 
 **What stays stable:** gridline moves and renames, load changes, section changes,
 edits in other bays or other rule instances, re-derivation at any level of detail,
@@ -79,6 +93,16 @@ bay — a spacing change from 16" to 19.2" produces *different members*, and pre
 otherwise would be false correspondence. Region splits and removal of the inducing
 decision likewise. This is the honest boundary: eids survive everything except changes
 to the very rule that defines them.
+
+**Gridline deletion (E3)** is handled by 0001 §6 stage-2 referential validation, not
+by eid machinery. A changeset deleting a line-id that any decision still references
+(a framing region bounded by it, an opening located from it) fails referential
+validation: the orphaning changeset cannot commit without also updating the
+referencing decisions in the same changeset. Those updates change the referencing
+rules' own output structure, which renumbers their elements honestly per the boundary
+above, and their overrides and exceptions dangle or error per §4. A line that no
+decision references anchors no eids — anchors only ever enter eids through a
+referencing decision's rule — so deleting it is a pure grid edit with no eid impact.
 
 ## 4. Split correspondence semantics (the R1 resolution)
 
@@ -145,7 +169,9 @@ uphold it is written (charter: acceptance tests red until earned):
    set (subsumed by derivation determinism, asserted separately for eids).
 2. **Gridline-move invariance** — moving any gridline: eid set unchanged; geometry
    changed; every override on affected members transitions to `displaced`, none
-   dangle, none silently re-attach.
+   dangle, none silently re-attach. Includes the **reordering move** (a line moved
+   spatially past its neighbor): the ordinal counting origin is unchanged because
+   the sort key is the line-id token, not position (E2).
 3. **Gridline-rename invariance** — renaming a line changes no eids and no override
    states.
 4. **Locality** — an edit confined to one rule instance perturbs no eids outside that
@@ -157,6 +183,12 @@ uphold it is written (charter: acceptance tests red until earned):
 7. **Honest renumbering** — a spacing change within a bay changes that bay's member
    eids and dangles that bay's exceptions (error) and overrides (warning); nothing
    outside the bay moves.
+8. **Gridline deletion (E3)** — deleting a line-id still referenced by any decision,
+   without updating the referencing decisions in the same changeset, is rejected at
+   referential validation. Deleting it *with* the referencing decisions updated
+   renumbers exactly the affected rule instances and dangles/errors their overrides
+   and exceptions per §4 — nothing else moves. Deleting an unreferenced line changes
+   no eids.
 
 ## 7. What this does *not* decide
 

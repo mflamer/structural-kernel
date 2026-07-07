@@ -28,14 +28,14 @@ Push back when the engineering says otherwise.
   PO reply, `docs/design/0001-review-findings-reply.md`). All §10 questions answered:
   **phase-1 domain is wood** — sawn lumber, NDS ASD checks, ASCE 7-22 §2.4 combos,
   with L/360 live and L/240 total deflection as hard constraints alongside unity.
-- ADRs 0002–0004 cut (SI units, solver-agnostic/xara-first, intent registry +
-  two-site enforcement). Index: `docs/decisions/README.md`.
-- **Derivation implementation is gated on the eid identity-scheme proposal**
-  (`docs/design/0002-eid-identity-scheme.md`, per review R1) surviving PO review;
-  it graduates to ADR 0005. Store/schemas/decisions/validation work is not gated.
+- ADRs 0002–0005 cut (SI units, solver-agnostic/xara-first, intent registry +
+  two-site enforcement, eid identity scheme). Index: `docs/decisions/README.md`.
+- **Eid scheme accepted 2026-07-07** (revisions E1–E3 applied per
+  `docs/design/0002-review.md`; graduated to ADR 0005) — **the R1 gate is lifted;
+  implementation is unblocked.** Next: increment 1, store + schemas.
 - Open action (PO, non-blocking): send the xara license-confirmation email
   (`docs/xara-license-email-draft.md`).
-- Increment order: store + schemas → decisions + validation → [eid proposal accepted]
+- Increment order: store + schemas → decisions + validation
   → derivation for the milestone structure → xara adapter + verification → overrides
   → intent checkers + solve-time design checks (serviceability is real in phase 1,
   citing intent instances) → exploration loop (evaluations keyed by
