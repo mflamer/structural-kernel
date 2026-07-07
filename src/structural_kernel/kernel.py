@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
+from structural_kernel.derivation import DanglingExceptionError, DerivationError, derive
 from structural_kernel.ids import ObjectHash
 from structural_kernel.objects import (
     Author,
@@ -31,6 +32,7 @@ from structural_kernel.validation import (
     apply_changeset,
     check_referential,
     check_schema,
+    resolved_snapshot_hash,
 )
 
 if TYPE_CHECKING:
@@ -56,8 +58,8 @@ def propose(
 ) -> ProposeResult:
     """Validate a changeset against the current tip of ``ref`` and commit it,
     or persist the rejection. Stages run fail-fast: schema, op application,
-    referential. (Derivation dry-run and intent checks are the increment-3+
-    seams — see validation module docstring.)"""
+    referential, derivation dry-run. (Intent checks are the remaining seam —
+    see validation module docstring.)"""
     current = store.read_ref(ref)
     if changeset.base_commit != current:
         return _reject(
@@ -74,7 +76,7 @@ def propose(
             ],
         )
 
-    base = _load_snapshot(store, current)
+    base = load_snapshot(store, current)
 
     issues = check_schema(changeset)
     if issues:
@@ -88,10 +90,45 @@ def propose(
     if issues:
         return _reject(store, changeset, issues)
 
+    # Stage 3: derivation dry-run — nothing that cannot derive ever commits.
+    try:
+        derive(result, snapshot_hash=resolved_snapshot_hash(result))
+    except DanglingExceptionError as exc:
+        return _reject(
+            store,
+            changeset,
+            [
+                ValidationIssue(
+                    code="dangling_exception",
+                    severity="error",
+                    message=str(exc),
+                    detail={
+                        "did": exc.did,
+                        "target_eid": exc.target_eid,
+                        "candidates": list(exc.candidates),
+                    },
+                )
+            ],
+        )
+    except DerivationError as exc:
+        return _reject(
+            store,
+            changeset,
+            [
+                ValidationIssue(
+                    code="derivation_failure",
+                    severity="error",
+                    message=str(exc),
+                    detail={},
+                )
+            ],
+        )
+
     return _commit(store, changeset, result, author, message, timestamp, ref, current)
 
 
-def _load_snapshot(store: FileStore, commit_hash: str | None) -> ResolvedSnapshot:
+def load_snapshot(store: FileStore, commit_hash: str | None) -> ResolvedSnapshot:
+    """Resolve a commit's snapshot into its decision payloads and overrides."""
     if commit_hash is None:
         return ResolvedSnapshot()
     commit = store.get_model(commit_hash, Commit)

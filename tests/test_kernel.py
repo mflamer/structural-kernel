@@ -5,6 +5,8 @@ from pathlib import Path
 from conftest import (
     AUTHOR,
     LX1,
+    LY_A,
+    LY_B,
     T0,
     decision,
     framing_params,
@@ -258,6 +260,66 @@ def test_override_ops_land_in_the_snapshot(tmp_path: Path) -> None:
     )
     assert duplicate.outcome == "rejected"
     assert _codes(duplicate) == {"duplicate_override"}
+
+
+def test_stage3_rejects_snapshots_that_cannot_derive(tmp_path: Path) -> None:
+    store = FileStore(tmp_path)
+    grid = decision("grid", "Grid", grid_params())
+    framing = decision(
+        "gravity_framing_strategy",
+        "framing",
+        framing_params().model_copy(update={"joist_section": "3x17"}),  # no such section
+        deps=[grid.did],
+    )
+    result = _propose(
+        store,
+        Changeset(
+            base_commit=None, ops=[AddDecision(decision=grid), AddDecision(decision=framing)]
+        ),
+    )
+    assert result.outcome == "rejected"
+    assert _codes(result) == {"derivation_failure"}
+    assert "3x17" in result.issues[0].message
+
+
+def test_exception_decision_retargets_a_derived_section(tmp_path: Path) -> None:
+    store = FileStore(tmp_path)
+    _grid, framing = _commit_structure(store)
+    joist_eid = f"jst:{framing.did}:{LY_A}-{LY_B}.{LX1}+006"
+    exception = decision(
+        "exception",
+        "doubled joist under the tub",
+        {"target_eid": joist_eid, "field": "section", "value": "4x10"},
+        deps=[framing.did],
+    )
+    result = _propose(
+        store,
+        Changeset(base_commit=store.read_ref("main"), ops=[AddDecision(decision=exception)]),
+    )
+    assert result.outcome == "committed", result.issues
+
+
+def test_dangling_exception_is_a_hard_rejection(tmp_path: Path) -> None:
+    """ADR 0005 / R3: an exception whose target does not exist is an error the
+    changeset must resolve, never quiet inertness."""
+    store = FileStore(tmp_path)
+    _commit_structure(store)
+    exception = decision(
+        "exception",
+        "targets nothing",
+        {
+            "target_eid": "jst:00000000000000000000000000:X+999",
+            "field": "section",
+            "value": "4x10",
+        },
+    )
+    result = _propose(
+        store,
+        Changeset(base_commit=store.read_ref("main"), ops=[AddDecision(decision=exception)]),
+    )
+    assert result.outcome == "rejected"
+    assert _codes(result) == {"dangling_exception"}
+    assert result.issues[0].detail["target_eid"] == "jst:00000000000000000000000000:X+999"
 
 
 def test_rejection_collects_all_errors_within_a_stage(tmp_path: Path) -> None:

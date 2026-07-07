@@ -6,6 +6,14 @@ is derived. See docs/kickoff.md (charter) and docs/design/0001 (architecture).
 
 from structural_kernel.canonical import canonical_bytes, content_hash, model_document
 from structural_kernel.decisions import DecisionParams, parse_params
+from structural_kernel.derivation import (
+    DERIVATION_VERSION,
+    AnalysisModel,
+    DerivationError,
+    DerivedModel,
+    derive,
+)
+from structural_kernel.eids import render_eid
 from structural_kernel.ids import Did, LineId, ObjectHash, new_line_id, new_ulid
 from structural_kernel.kernel import ProposeResult, propose
 from structural_kernel.objects import (
@@ -27,6 +35,8 @@ from structural_kernel.validation import ValidationIssue, ValidationReport
 __version__ = "0.0.1"
 
 __all__ = [
+    "DERIVATION_VERSION",
+    "AnalysisModel",
     "Author",
     "Changeset",
     "ChangesetOp",
@@ -34,6 +44,8 @@ __all__ = [
     "Decision",
     "DecisionKind",
     "DecisionParams",
+    "DerivationError",
+    "DerivedModel",
     "Did",
     "Dimension",
     "DimensionError",
@@ -54,10 +66,12 @@ __all__ = [
     "canonical_bytes",
     "content_hash",
     "convert",
+    "derive",
     "model_document",
     "new_line_id",
     "new_ulid",
     "parse_params",
     "parse_quantity",
     "propose",
+    "render_eid",
 ]

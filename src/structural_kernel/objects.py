@@ -58,7 +58,11 @@ class LoadTarget(KernelModel):
     load: Did
 
 
-IntentTarget = EidTarget | ProvisionTarget | LoadTarget
+class DecisionTarget(KernelModel):
+    decision: Did
+
+
+IntentTarget = EidTarget | ProvisionTarget | LoadTarget | DecisionTarget
 
 
 class IntentRelation(KernelModel):

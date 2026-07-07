@@ -107,6 +107,9 @@ class GravityFramingStrategyParams(KernelModel):
     joist_axis: Literal["x", "y"]  # the axis joists span along
     joist_spacing: LengthQuantity
     member_family: Literal["sawn_lumber"]  # review Q1: phase 1 is sawn lumber
+    # Reference stiffness/strength come from this grade via the sections table;
+    # the *choice* of grade is this decision's to make, never a code constant.
+    member_grade: Literal["DF-L No.2"]
     # Review Q4: sizes are decision parameters; explorations vary them.
     joist_section: Name
     beam_section: Name

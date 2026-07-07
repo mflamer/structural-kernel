@@ -55,7 +55,7 @@ def grid_params() -> GridParams:
 
 
 def levels_params() -> LevelsParams:
-    return LevelsParams(levels=[Level(level_id="LV1", name="Level 1", elevation=ft(0.0))])
+    return LevelsParams(levels=[Level(level_id="LV1", name="Level 1", elevation=ft(10.0))])
 
 
 def loads_params() -> LoadAssumptionsParams:
@@ -75,6 +75,7 @@ def framing_params() -> GravityFramingStrategyParams:
         joist_axis="y",
         joist_spacing=inches(16.0),
         member_family="sawn_lumber",
+        member_grade="DF-L No.2",
         joist_section="2x10",
         beam_section="4x12",
         post_section="4x4",

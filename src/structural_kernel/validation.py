@@ -15,6 +15,7 @@ from typing import Literal
 import pydantic
 from pydantic import Field, JsonValue
 
+from structural_kernel.canonical import content_hash, model_document
 from structural_kernel.decisions import GridParams, line_refs, parse_params
 from structural_kernel.ids import ObjectHash
 from structural_kernel.objects import (
@@ -22,6 +23,7 @@ from structural_kernel.objects import (
     AddOverride,
     Changeset,
     Decision,
+    DecisionTarget,
     KernelModel,
     LoadTarget,
     ModifyDecision,
@@ -29,6 +31,7 @@ from structural_kernel.objects import (
     OverrideSet,
     RemoveDecision,
     RemoveOverride,
+    Snapshot,
 )
 
 IssueCode = Literal[
@@ -41,6 +44,9 @@ IssueCode = Literal[
     "dependency_cycle",
     "unknown_line_ref",
     "unknown_load_ref",
+    "unknown_decision_ref",
+    "derivation_failure",
+    "dangling_exception",
     "stale_base",
 ]
 
@@ -260,8 +266,37 @@ def check_referential(result: ResolvedSnapshot) -> list[ValidationIssue]:
                             load=relation.target.load,
                         )
                     )
+                if (
+                    isinstance(relation.target, DecisionTarget)
+                    and relation.target.decision not in decisions
+                ):
+                    issues.append(
+                        _error(
+                            "unknown_decision_ref",
+                            f"intent on {decision.did} references unknown "
+                            f"decision {relation.target.decision}",
+                            did=decision.did,
+                            decision=relation.target.decision,
+                        )
+                    )
 
     return issues
+
+
+def resolved_snapshot_hash(result: ResolvedSnapshot) -> str:
+    """The content address the resulting snapshot *would* have — computable
+    before anything is written, so the derivation dry-run's provenance matches
+    the eventual commit exactly."""
+    snapshot = Snapshot(
+        decisions={
+            did: content_hash(model_document(decision))
+            for did, decision in sorted(result.decisions.items())
+        },
+        override_set=(
+            content_hash(model_document(result.overrides)) if result.overrides.overrides else None
+        ),
+    )
+    return content_hash(model_document(snapshot))
 
 
 def _find_cycle(decisions: dict[str, Decision]) -> tuple[str, ...] | None:

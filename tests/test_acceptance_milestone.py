@@ -21,8 +21,9 @@ from conftest import (
     loads_params,
     opening_params,
 )
-from structural_kernel.kernel import propose
-from structural_kernel.objects import AddDecision, Changeset, Commit, Snapshot
+from structural_kernel.derivation import derive
+from structural_kernel.kernel import load_snapshot, propose
+from structural_kernel.objects import AddDecision, Changeset, Commit, Decision, Snapshot
 from structural_kernel.store import FileStore
 
 
@@ -32,18 +33,23 @@ def _increment(name: str) -> pytest.MarkDecorator:
     )
 
 
-def test_one_story_structure_is_defined_only_by_decisions(tmp_path: Path) -> None:
-    """Grid + gravity framing strategy + one lateral strategy + one opening,
-    all committed through the changeset pipeline. (Earned in increment 2.)"""
-    store = FileStore(tmp_path)
+def _commit_milestone_structure(store: FileStore) -> list[Decision]:
     grid = decision("grid", "Grid", grid_params())
+    levels = decision("levels", "Levels", levels_params())
+    loads = decision("load_assumptions", "Floor loads", loads_params())
+    framing = decision(
+        "gravity_framing_strategy",
+        "Floor framing",
+        framing_params(),
+        deps=[grid.did, levels.did, loads.did],
+    )
     structure = [
         grid,
-        decision("levels", "Levels", levels_params()),
-        decision("load_assumptions", "Floor loads", loads_params()),
-        decision("gravity_framing_strategy", "Floor framing", framing_params(), deps=[grid.did]),
+        levels,
+        loads,
+        framing,
         decision("lateral_strategy", "Shear walls", lateral_params(), deps=[grid.did]),
-        decision("opening", "Door D1", opening_params(), deps=[grid.did]),
+        decision("opening", "Door D1", opening_params(), deps=[grid.did, framing.did, loads.did]),
     ]
     result = propose(
         store,
@@ -53,6 +59,14 @@ def test_one_story_structure_is_defined_only_by_decisions(tmp_path: Path) -> Non
         timestamp=T0,
     )
     assert result.outcome == "committed", result.issues
+    return structure
+
+
+def test_one_story_structure_is_defined_only_by_decisions(tmp_path: Path) -> None:
+    """Grid + gravity framing strategy + one lateral strategy + one opening,
+    all committed through the changeset pipeline. (Earned in increment 2.)"""
+    store = FileStore(tmp_path)
+    structure = _commit_milestone_structure(store)
 
     tip = store.read_ref("main")
     assert tip is not None
@@ -60,12 +74,30 @@ def test_one_story_structure_is_defined_only_by_decisions(tmp_path: Path) -> Non
     assert set(snapshot.decisions) == {d.did for d in structure}
 
 
-@_increment("derivation for the milestone structure")
-def test_derivation_produces_members_analysis_artifact_and_bill() -> None:
+def test_derivation_produces_members_analysis_artifact_and_bill(tmp_path: Path) -> None:
     """Member instances with spans and tributary widths; a self-contained
     analysis model artifact; a bill of elements. The opening induces a header
-    carrying gravity-load-path intent — computed, not typed in."""
-    raise NotImplementedError
+    carrying gravity-load-path intent — computed, not typed in.
+    (Earned in increment 3.)"""
+    store = FileStore(tmp_path)
+    _commit_milestone_structure(store)
+
+    tip = store.read_ref("main")
+    assert tip is not None
+    commit = store.get_model(tip, Commit)
+    model = derive(load_snapshot(store, tip), snapshot_hash=commit.snapshot)
+
+    joists = [e for e in model.elements if e.role == "joist"]
+    assert joists and all(e.length.si_mag > 0 and e.tributary_width is not None for e in joists)
+    assert model.analysis is not None
+    assert model.analysis.provenance.snapshot == commit.snapshot
+    assert model.bill.lines and model.bill.countables.piece_count == len(model.elements)
+
+    [header] = [e for e in model.elements if e.role == "header"]
+    [intent] = header.intent
+    assert intent.category == "gravity_load_path"
+    assert intent.provenance.source == "derived"  # computed, not typed in
+    assert any(r.role == "redirects_load_around" for r in intent.relations)
 
 
 @_increment("xara adapter + verification")
