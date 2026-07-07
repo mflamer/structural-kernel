@@ -13,25 +13,35 @@ Push back when the engineering says otherwise.
 
 ## Where truth lives — read in this order
 - `docs/kickoff.md` — the charter: principles, non-goals, phase 1 milestone. Governs.
-- `docs/design/0001-kernel-and-solver-architecture.md` — architecture proposal
-  (decision graph, derivation contract, changesets, overrides, intent registry,
-  analysis artifacts, solver service, explorations, xara-first solver posture).
+- `docs/vision.md` — the north-star demo; its standing requirements (enumerated in
+  `docs/design/0001-review-response.md`, items 1–10) must be visible in every ADR.
+- `docs/design/0001-kernel-and-solver-architecture.md` — the architecture, approved
+  and revised (decision graph, derivation contract, changesets, overrides, intent
+  registry + two-site enforcement, analysis artifacts, solver service, explorations
+  with evaluations as a separate layer). Review record:
+  `0001-review-response.md` + `0001-review-findings-reply.md` alongside it.
 - `docs/decisions/` — ADR log. Settled choices only; proposals live in docs/design/
   until they survive review. This project is itself decision-derived; eat the dog food.
 
 ## Current status / gates (update this section as things change)
-- **Pre-implementation.** Design doc drafted, §7.3 re-cut in review 2026-07-07
-  (solver-agnostic; xara is the first engine; purpose-built solver demoted to a
-  test-fixture cross-check). Awaiting product-owner review of the rest.
-- **Implementation is gated on open questions 1–2** (design doc §10): material domain
-  for the phase-1 structure (wood/NDS vs steel/AISC) and which load combinations
-  define unity (ASD vs LRFD). Do not start kernel code until the PO answers.
-- One open action: email xara's maintainer (STAIRLab) to confirm whole-tree
-  BSD-2-Clause relicensing covers the inherited OpenSees core.
-- Increment order after review: store + schemas → decisions + validation → derivation
-  for the milestone structure → xara adapter + verification → overrides → intent
-  checkers → exploration loop. Small, reviewable increments; milestone criteria in
-  the charter are the acceptance tests, written early, red until earned.
+- **Design doc 0001 approved 2026-07-07** (revisions R1–R3 applied same day per the
+  PO reply, `docs/design/0001-review-findings-reply.md`). All §10 questions answered:
+  **phase-1 domain is wood** — sawn lumber, NDS ASD checks, ASCE 7-22 §2.4 combos,
+  with L/360 live and L/240 total deflection as hard constraints alongside unity.
+- ADRs 0002–0004 cut (SI units, solver-agnostic/xara-first, intent registry +
+  two-site enforcement). Index: `docs/decisions/README.md`.
+- **Derivation implementation is gated on the eid identity-scheme proposal**
+  (`docs/design/0002-eid-identity-scheme.md`, per review R1) surviving PO review;
+  it graduates to ADR 0005. Store/schemas/decisions/validation work is not gated.
+- Open action (PO, non-blocking): send the xara license-confirmation email
+  (`docs/xara-license-email-draft.md`).
+- Increment order: store + schemas → decisions + validation → [eid proposal accepted]
+  → derivation for the milestone structure → xara adapter + verification → overrides
+  → intent checkers + solve-time design checks (serviceability is real in phase 1,
+  citing intent instances) → exploration loop (evaluations keyed by
+  (result set, cost_basis), separate from solving). Small, reviewable increments;
+  milestone criteria in the charter are the acceptance tests, written early, red
+  until earned.
 
 ## Hard rules from the charter
 - **The persisted schema is the source of truth, not the Python code.** Storage is
