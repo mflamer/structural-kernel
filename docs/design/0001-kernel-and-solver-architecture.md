@@ -359,35 +359,52 @@ results(job_id) → [ SolveResult ]           # keyed by artifact hash
   solver build fingerprints, and verification tests use tolerances (§9), never hash
   equality on results.
 
-### 7.3 Solver recommendation
+### 7.3 Solver posture and first engine
 
-**Recommendation: build a purpose-built linear-elastic 3D frame solver for phase 1,
-behind the service interface; treat the external-engine decision as deferred to the
-nonlinear/dynamic milestone, with OpenSees as the leading adapter candidate pending a
-licensing resolution.**
+*(Re-cut 2026-07-07 after product-owner review — supersedes the first draft's
+"purpose-built solver for phase 1" recommendation. What changed: (1) the first draft
+misread the OpenSees license — its clause (b) permits commercial entities internal
+use, reserving only incorporation into distributed products; (2) xara exists — a
+BSD-licensed Berkeley refactoring of the OpenSees engine — which removes the licensing
+question from the critical path entirely.)*
 
-Candidates against the charter's criteria (headless/container-friendly, permissive
+**Position: the kernel is solver-agnostic by design. The value of this system is the
+decision graph and what surrounds the solve — derivation, intent, design checks,
+explorations — not the solver, which is commodity physics behind §7.2's interface.
+Engine choice is therefore an adapter decision, not an architecture decision.
+First engine: xara, from phase 1, pending one licensing confirmation.**
+
+Solver-agnosticism is won or lost in the schemas, not at the API layer:
+
+- **The artifact (§7.1) and `SolveResult` schemas are the real contract.** They speak
+  *our* vocabulary — releases, sections, loads, combos, end forces — and never bend
+  toward an engine's idioms. Adapters translate in both directions; an engine-ism
+  leaking into the schema is solver lock-in wearing an API costume.
+- **The failure taxonomy is ours.** Adapters map engine noise (return codes, stderr,
+  non-convergence chatter) into the structured failures of §7.2. Callers and
+  explorations never see engine-specific errors.
+- **Design checks live kernel-side.** Unity, deflection limits, provision citations —
+  these consume solve results but are not engine output. They are part of the moat, not
+  part of the solver.
+- **Replaceable ≠ plural.** Every adapter carries the full hand-calc verification
+  suite (§9), so the policy is one blessed engine at a time. Agnosticism is an exit
+  option we keep cheap, not a backend matrix we maintain.
+
+Engine survey against the charter's criteria (headless/container-friendly, permissive
 commercial licensing, frame/wall robustness, path to nonlinear/dynamic):
 
 | Candidate | Headless | License for commercial use | Frame/wall fit | Nonlinear path | Verdict |
 |---|---|---|---|---|---|
-| **OpenSees** | Excellent (OpenSeesPy) | **Problem**: UC Regents terms grant research/education/non-profit use; commercial use needs separate arrangement | Excellent — built for building frames | Excellent (best-in-class EQ/nonlinear) | Best engine, blocked on license until resolved |
-| **CalculiX** | Good | GPL-2 — usable server-side in-house (no distribution), but copyleft constrains future packaging/embedding | Weak for buildings: continuum-first; beam elements internally expanded to solids with known quirks | Good (general FEA) | Wrong element technology for frames |
-| **code_aster** | Poor-to-fair (notorious to build/drive; containers exist) | GPL-2 | Strong FEA, not building-frame-idiomatic; French-first docs | Excellent | Ops burden out of proportion to phase 1 |
-| **Purpose-built linear** | Trivial | Ours | Exact fit: direct-stiffness 3D frames is textbook, well-bounded | None — by design | **Phase 1 choice** |
+| **xara** (STAIRLab/Berkeley refactoring of OpenSees, a.k.a. OpenSeesRT) | Excellent — pip-installable, drop-in OpenSeesPy replacement, faster | **BSD-2-Clause** in-repo, no UC use restriction; published by the copyright-holding institution's own lab under PEER's open-source org. One open item: confirm with the maintainer that the whole-tree relicensing (not just new contributions) is intended and authorized | Excellent — the OpenSees engine, built for building frames | Excellent (best-in-class EQ/nonlinear, arrives with no phase-2 cliff) | **First engine, phase 1** |
+| **OpenSees upstream** | Excellent (OpenSeesPy) | Clause (a): edu/research/non-profit, noncommercial. Clause (b): other entities, *internal purposes only* — a server-side SaaS reading is plausible but unlitigated; UC OTL license required to ship it inside distributed products | Excellent | Excellent | Superseded by xara (same engine, cleaner license) |
+| **CalculiX** | Good | GPL-2 — server-side in-house use is fine, but copyleft constrains future packaging/embedding | Weak for buildings: continuum-first; beam elements internally expanded to solids with known quirks | Good (general FEA) | Wrong element technology for frames |
+| **code_aster** | Poor-to-fair (notorious to build/drive; containers exist) | GPL-2 | Strong FEA, not building-frame-idiomatic; French-first docs | Excellent | Ops burden out of proportion |
+| **Purpose-built linear** | Trivial | Ours | Exact fit for phase-1 scope | None — by design | **Demoted to test fixture**: a minimal direct-stiffness cross-check inside the verification suite (an independent second opinion on the hand-calc fixtures), *not* a service implementation and not on the critical path |
 
-Why building it is not scope creep: phase 1 needs linear-elastic 3D frame analysis of
-small models — a direct-stiffness assembler and a dense/banded solve, on the order of a
-thousand lines with tests, every line verifiable against hand calcs (which the milestone
-demands anyway). It eliminates the licensing question from the critical path, gives us a
-solver whose failure modes we fully own (clean `mechanism_detected` diagnostics rather
-than a wrapped engine's stderr), and — because the service interface is the contract —
-is *designed to be demoted* to "the fast screening solver" the day a nonlinear engine
-arrives behind the same interface. The risk to avoid is quietly growing it toward
-nonlinearity; that is an explicit non-goal, enforced by review.
-
-What it costs: engine results we could have had "for free" (P-Δ, modal, time-history)
-arrive only with the phase 2+ adapter. Accepted: none are in the phase 1 milestone.
+The phase-1 solver work is therefore the **xara adapter**: artifact → xara model,
+xara results → `SolveResult`, engine errors → the failure taxonomy, all exercised by
+the hand-calc verification suite. That suite validates the adapter and the schema
+mapping — the two places bugs can actually live — rather than a solver of our own.
 
 ## 8. Explorations
 
@@ -450,7 +467,9 @@ The propose → derive → solve → evaluate loop as a persistent kernel object
 - Solver verification: hand-calc fixtures (simply-supported beam under UDL, point loads,
   two-span continuous, simple frame sway) at stated tolerances (proposal: 0.5% on
   displacements, 0.1% on reactions — review), plus at least one published benchmark
-  problem. Tolerances, not hash equality (§7.2).
+  problem. Tolerances, not hash equality (§7.2). The suite runs through the xara
+  adapter — it validates the adapter and schema mapping (§7.3) — with the minimal
+  direct-stiffness fixture solver as an independent cross-check on the same fixtures.
 - The phase 1 milestone list in the charter is the acceptance test suite, written as
   tests early, red until earned.
 
@@ -489,9 +508,14 @@ Ordered by how much they block.
    a hard constraint (violating candidates are rejected pre-solve). Should an
    exploration ever be allowed to *propose* intent changes (e.g. "remove the opening")?
    Proposal: no in phase 1 — intent edits are human-reviewed changesets only.
-10. **Anything in §7.3 you disagree with** — particularly the deferred external-engine
-    decision. If early nonlinear matters more than the license cleanliness, the
-    OpenSees-first path is arguable and I'll re-cut the tradeoff.
+10. **Xara license confirmation** (§7.3, resolved in direction, one action open). The
+    xara-first posture was settled in review on 2026-07-07. The remaining action: a
+    short email to the xara maintainer (Claudio Perez, STAIRLab) confirming the
+    whole-tree BSD-2-Clause relicensing — inherited OpenSees core included, not just
+    new contributions — is intended and authorized. Cheap insurance before a
+    commercial product depends on it; I'll draft it, you send it as the commercial
+    entity. If real revenue ever rides on the answer, that's a
+    lawyer-reads-it-once item.
 
 ---
 
