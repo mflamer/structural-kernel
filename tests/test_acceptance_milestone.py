@@ -6,7 +6,24 @@ recorded deliberately, never by accident. Do not weaken these to match the
 implementation; the charter governs.
 """
 
+from pathlib import Path
+
 import pytest
+
+from conftest import (
+    AUTHOR,
+    T0,
+    decision,
+    framing_params,
+    grid_params,
+    lateral_params,
+    levels_params,
+    loads_params,
+    opening_params,
+)
+from structural_kernel.kernel import propose
+from structural_kernel.objects import AddDecision, Changeset, Commit, Snapshot
+from structural_kernel.store import FileStore
 
 
 def _increment(name: str) -> pytest.MarkDecorator:
@@ -15,11 +32,32 @@ def _increment(name: str) -> pytest.MarkDecorator:
     )
 
 
-@_increment("decisions + validation")
-def test_one_story_structure_is_defined_only_by_decisions() -> None:
+def test_one_story_structure_is_defined_only_by_decisions(tmp_path: Path) -> None:
     """Grid + gravity framing strategy + one lateral strategy + one opening,
-    all committed through the changeset pipeline."""
-    raise NotImplementedError
+    all committed through the changeset pipeline. (Earned in increment 2.)"""
+    store = FileStore(tmp_path)
+    grid = decision("grid", "Grid", grid_params())
+    structure = [
+        grid,
+        decision("levels", "Levels", levels_params()),
+        decision("load_assumptions", "Floor loads", loads_params()),
+        decision("gravity_framing_strategy", "Floor framing", framing_params(), deps=[grid.did]),
+        decision("lateral_strategy", "Shear walls", lateral_params(), deps=[grid.did]),
+        decision("opening", "Door D1", opening_params(), deps=[grid.did]),
+    ]
+    result = propose(
+        store,
+        Changeset(base_commit=None, ops=[AddDecision(decision=d) for d in structure]),
+        author=AUTHOR,
+        message="the milestone structure, decisions only",
+        timestamp=T0,
+    )
+    assert result.outcome == "committed", result.issues
+
+    tip = store.read_ref("main")
+    assert tip is not None
+    snapshot = store.get_model(store.get_model(tip, Commit).snapshot, Snapshot)
+    assert set(snapshot.decisions) == {d.did for d in structure}
 
 
 @_increment("derivation for the milestone structure")

@@ -31,8 +31,13 @@ Push back when the engineering says otherwise.
 - ADRs 0002–0005 cut (SI units, solver-agnostic/xara-first, intent registry +
   two-site enforcement, eid identity scheme). Index: `docs/decisions/README.md`.
 - **Eid scheme accepted 2026-07-07** (revisions E1–E3 applied per
-  `docs/design/0002-review.md`; graduated to ADR 0005) — **the R1 gate is lifted;
-  implementation is unblocked.** Next: increment 1, store + schemas.
+  `docs/design/0002-review.md`; graduated to ADR 0005) — the R1 gate is lifted.
+- **Increments 1–2 done** (2026-07-07): units/canonical/store/object schemas, then
+  decision-kind param schemas + the propose → validate → commit pipeline (stages 1–2:
+  schema incl. dimensional checks, referential incl. E3 line-ref integrity; stages
+  3–4 are documented seams awaiting derivation and the intent registry). Milestone
+  acceptance test 1 of 7 earned. Next: increment 3, derivation for the milestone
+  structure (implements the ADR 0005 eid grammar).
 - Open action (PO, non-blocking): send the xara license-confirmation email
   (`docs/xara-license-email-draft.md`).
 - Increment order: store + schemas → decisions + validation

@@ -18,9 +18,14 @@ _CROCKFORD: Final = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 ULID_PATTERN: Final = r"^[0-9A-HJKMNP-TV-Z]{26}$"
 HASH_PATTERN: Final = r"^sha256:[0-9a-f]{64}$"
+LINE_ID_PATTERN: Final = r"^L[0-9A-HJKMNP-TV-Z]{8}$"
 
 Did = Annotated[str, StringConstraints(pattern=ULID_PATTERN)]
 ObjectHash = Annotated[str, StringConstraints(pattern=HASH_PATTERN)]
+# Stable grid-line identity (ADR 0005): minted when the line is created, never
+# renamed, and the only thing an eid anchor may embed. Display names live
+# beside it as mutable presentation fields.
+LineId = Annotated[str, StringConstraints(pattern=LINE_ID_PATTERN)]
 
 
 def new_ulid(timestamp_ms: int | None = None) -> str:
@@ -35,3 +40,8 @@ def new_ulid(timestamp_ms: int | None = None) -> str:
         raise ValueError(f"timestamp out of ULID range: {ts}")
     value = (ts << 80) | int.from_bytes(os.urandom(10))
     return "".join(_CROCKFORD[(value >> (i * 5)) & 0x1F] for i in range(125, -1, -5))
+
+
+def new_line_id() -> str:
+    """Mint a stable grid-line id. Kernel-side only, like ``new_ulid``."""
+    return "L" + "".join(_CROCKFORD[b % 32] for b in os.urandom(8))
