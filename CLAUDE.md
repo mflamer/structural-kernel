@@ -38,8 +38,18 @@ Push back when the engineering says otherwise.
   bill with countables, §7.1 analysis artifact as decoupled simple spans — documented
   idealization) wired in as validation stage 3, with `dangling_exception` and
   `derivation_failure` as structured rejections. Stage 4 (intent checkers) is the
-  remaining seam. Milestone acceptance tests 2 of 7 earned. Next: increment 4, the
-  xara adapter + hand-calc verification suite.
+  remaining seam. Milestone acceptance tests 2 of 7 earned.
+- **Increment 4 done** (2026-07-07): solver service (`solver.py` — cloud-shaped
+  interface, SolveResult with engine class/fidelity, failure taxonomy), shared planar
+  idealization (`planar.py`), the xara adapter (`xara_adapter.py`, import-guarded),
+  and the hand-calc verification suite (4 fixtures at 0.5%/0.1% tolerances) proven
+  against the ADR 0003 direct-stiffness cross-check (`tests/reference_solver.py`),
+  including an end-to-end derive→solve→hand-calc test.
+- **Blocker for acceptance test 3: xara has no Windows binaries** (the opensees wheel
+  ships Linux .so files; no Docker/WSL on this machine). The adapter and suite are
+  ready — earning the criterion needs a Linux run (CI, container, or WSL install,
+  which needs admin + reboot). PO to choose. Next increment otherwise: overrides
+  (increment 5).
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =

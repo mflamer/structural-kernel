@@ -24,7 +24,7 @@ solve. The artifact schema (§7.1) uses SI-suffixed field names by design.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -175,9 +175,20 @@ class AnalysisSupport(KernelModel):
 
 class AnalysisLineLoad(KernelModel):
     case: str
-    kind: Literal["line"]
+    kind: Literal["line"] = "line"
     element: str
     w_n_per_m: tuple[float, float, float]
+
+
+class AnalysisPointLoad(KernelModel):
+    case: str
+    kind: Literal["point"] = "point"
+    element: str
+    position: float  # fraction of element length from the i-end, 0..1
+    p_n: tuple[float, float, float]
+
+
+AnalysisLoad = Annotated[AnalysisLineLoad | AnalysisPointLoad, Field(discriminator="kind")]
 
 
 class Combo(KernelModel):
@@ -193,7 +204,7 @@ class AnalysisModel(KernelModel):
     nodes: list[AnalysisNode]
     elements: list[AnalysisElement]
     supports: list[AnalysisSupport]
-    loads: list[AnalysisLineLoad]
+    loads: list[AnalysisLoad]
     combos: list[Combo]
 
 
@@ -721,7 +732,7 @@ def _analysis(members: list[_Member], provenance: DerivationProvenance) -> Analy
     nodes: list[AnalysisNode] = []
     elements: list[AnalysisElement] = []
     supports: list[AnalysisSupport] = []
-    loads: list[AnalysisLineLoad] = []
+    loads: list[AnalysisLoad] = []
     cases: set[str] = set()
 
     for index, member in enumerate(flexural, start=1):

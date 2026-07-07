@@ -8,6 +8,15 @@ dependencies = [
     "pydantic>=2.11",
 ]
 
+[project.optional-dependencies]
+# The blessed engine (ADR 0003). No Windows binaries as of 2026-07: the
+# opensees wheel ships Linux .so files, so install this extra on Linux
+# (CI, container, WSL). The adapter import-guards; its tests skip when the
+# native runtime is absent.
+xara = [
+    "xara>=0.0.13",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",

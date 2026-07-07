@@ -280,7 +280,9 @@ def test_analysis_artifact_loads_combos_and_sources() -> None:
     # interior joist: w_L = 40 psf x 16 in tributary, straight down
     interior = next(eid for eid in by_source if eid.endswith("+001"))
     loads_on = {
-        load.case: load.w_n_per_m for load in analysis.loads if load.element == by_source[interior]
+        load.case: load.w_n_per_m
+        for load in analysis.loads
+        if load.kind == "line" and load.element == by_source[interior]
     }
     expected_wl = 40.0 * _PSF * (16.0 * 0.0254)
     assert abs(loads_on["L"][2] + expected_wl) < 1e-9

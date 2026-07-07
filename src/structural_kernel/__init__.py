@@ -28,9 +28,17 @@ from structural_kernel.objects import (
     OverrideSet,
     Snapshot,
 )
+from structural_kernel.solver import (
+    EngineAdapter,
+    EngineInfo,
+    LocalSolverService,
+    SolveFailure,
+    SolveResult,
+)
 from structural_kernel.store import FileStore, StaleBaseError, StoreError
 from structural_kernel.units import Dimension, DimensionError, Quantity, convert, parse_quantity
 from structural_kernel.validation import ValidationIssue, ValidationReport
+from structural_kernel.xara_adapter import XaraEngine, xara_available
 
 __version__ = "0.0.1"
 
@@ -49,19 +57,25 @@ __all__ = [
     "Did",
     "Dimension",
     "DimensionError",
+    "EngineAdapter",
+    "EngineInfo",
     "FileStore",
     "IntentInstance",
     "LineId",
+    "LocalSolverService",
     "ObjectHash",
     "Override",
     "OverrideSet",
     "ProposeResult",
     "Quantity",
     "Snapshot",
+    "SolveFailure",
+    "SolveResult",
     "StaleBaseError",
     "StoreError",
     "ValidationIssue",
     "ValidationReport",
+    "XaraEngine",
     "__version__",
     "canonical_bytes",
     "content_hash",
@@ -74,4 +88,5 @@ __all__ = [
     "parse_quantity",
     "propose",
     "render_eid",
+    "xara_available",
 ]

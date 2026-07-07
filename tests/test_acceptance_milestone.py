@@ -100,7 +100,13 @@ def test_derivation_produces_members_analysis_artifact_and_bill(tmp_path: Path) 
     assert any(r.role == "redirects_load_around" for r in intent.relations)
 
 
-@_increment("xara adapter + verification")
+@_increment(
+    "xara engine on a platform with native binaries (Linux CI/container; "
+    "no Windows wheels as of 2026-07). The service, adapter, fixtures, and "
+    "direct-stiffness cross-check all exist and pass — see "
+    "test_solver_verification.py — but ADR 0003 reserves this criterion for "
+    "the blessed engine."
+)
 def test_solver_results_verify_against_hand_calcs() -> None:
     """The solver service (local, cloud-shaped interface) solves the artifact;
     results match hand calculations within the stated tolerances."""
