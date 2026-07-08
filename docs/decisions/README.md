@@ -19,3 +19,4 @@ status changes and they link forward.
 | [0007](0007-multi-material-design-engines.md) | Multi-material design-check engines behind a common adapter (wood/steel/concrete + ASCE 7 loads) | Accepted 2026-07-08 |
 | [0008](0008-steel-framing-and-heterogeneous-exploration.md) | Steel framing decision kind (three-tier, AISC/LRFD) and heterogeneous exploration | Accepted 2026-07-08 |
 | [0009](0009-llm-proposer.md) | The LLM proposer behind the Proposer seam (Anthropic client + fake, propose-only) | Accepted 2026-07-08 |
+| [0010](0010-closed-loop-llm-refinement.md) | Closed-loop LLM refinement (feed prior results back; converge on budget or satisfaction) | Accepted 2026-07-08 |

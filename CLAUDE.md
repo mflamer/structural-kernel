@@ -137,11 +137,23 @@ Push back when the engineering says otherwise.
   directly" holds by construction. Replay reads the recorded slate, never
   re-calls the model; the model identity is on the `ProposerRef`. CI is
   deterministic and secret-free (fake client only). All gates green.
-- **Deferred (phase-2 continues):** closed-loop LLM refinement (propose → see
-  results → propose better); conversational intent capture (the vision's
-  column-free-region → typed intent); steel headers (openings don't yet induce
-  over steel); interior/multi-bay columns; true LTB with a real Lb; HSS/A500
-  columns; lateral analysis; cost_basis evaluation; concrete framing kind.
+- **Phase-2 sprint 3 done (2026-07-08, PO-directed): ADR 0010 — closed-loop LLM
+  refinement.** `LLMProposer` gains a `refine` flag (default single-slate is the
+  ADR 0009 behavior). In refine mode each later generation feeds the prior
+  round's results back — per candidate: kind, member sizes, feasible?, mass,
+  worst unity; rejected → reason; plus the best feasible so far — and prompts for
+  an improved slate (heavier where a check governs, lighter where there is
+  margin). The loop ends when the model proposes nothing or the kernel's
+  convergence/budget stops it; no new stopping machinery (the lifecycle already
+  looped generations). Still propose-only, still replay-by-record; the mode is on
+  the `ProposerRef`. `ScriptedLLMClient` (slate-per-call) drives the deterministic
+  closed-loop tests. All gates green.
+- **Deferred (phase-2 continues):** conversational intent capture (the vision's
+  column-free-region → typed intent); governing-member feedback (name the check,
+  not just max_unity) and loop-until-dry diversity for the refinement loop; steel
+  headers (openings don't yet induce over steel); interior/multi-bay columns;
+  true LTB with a real Lb; HSS/A500 columns; lateral analysis; cost_basis
+  evaluation; concrete framing kind.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =
