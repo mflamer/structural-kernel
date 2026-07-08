@@ -101,10 +101,27 @@ Push back when the engineering says otherwise.
   **This is preparation only** — no steel/concrete *framing decision kind* exists
   yet; wiring steel into derivation + heterogeneous exploration remains the
   representation-gated phase-2 lift.
-- **Per the charter: STOP. Phase 1 halts here for the PO's representation review
-  before any scope is added.** Do not start phase-2 work (LLM proposer, AI surface,
-  lateral analysis, cost_basis evaluation, material framing decision kinds) without
-  that review.
+- **Phase-2 sprint 1 done (2026-07-08, PO-directed): ADR 0008 — steel framing +
+  heterogeneous exploration.** The PO directed the sprint forward, *deliberately
+  crossing* the charter's phase-1 halt (chose "proceed to steel" over "review
+  first"; the representation review of the decision graph is still owed and now
+  runs against a graph that already exercises heterogeneous kinds). Added the
+  `steel_framing_strategy` decision kind (three-tier beams→girders→columns, A992,
+  AISC 360-22 **LRFD**, continuously braced Lb=0 — PO domain calls). Wood and
+  steel share one geometry rule (`_derive_three_tier`), so steel inherits the
+  ADR 0005 eid grammar; new roles girder/column, tokens gdr/col. Steel members
+  carry `design_method` and earn AISC checks automatically (checks resolve the
+  engine by family, ADR 0007). `loads.py` grew a combo **purpose** (strength |
+  service): LRFD sizes on §2.3 factored combos but deflection stays a service-
+  level check — wood (ASD, service-level) is byte-identical. `SystemChoiceProposer`
+  ranks candidates of *different kinds* (a wood scheme vs a steel scheme) on the
+  method-neutral member-mass metric through the ordinary pipeline (standing
+  req. 1, now exercised end to end). All gates green.
+- **Deferred (phase-2 continues, not started):** steel headers (openings don't
+  yet induce over steel), interior/multi-bay columns, true LTB with a real Lb,
+  HSS/A500 columns, LLM proposer, AI surface, lateral analysis, cost_basis
+  evaluation, concrete framing kind. The **representation review is still owed** —
+  surface it before broadening phase-2 scope further.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =
