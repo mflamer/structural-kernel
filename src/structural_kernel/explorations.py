@@ -231,6 +231,34 @@ class StubLLMProposer:
         ]
 
 
+class SystemChoiceProposer:
+    """The vision's *heterogeneous* exploration (standing requirement 1): a
+    fixed set of candidate structural systems ranked as one generation, where
+    candidates may differ in decision *kind* — a wood ``gravity_framing_strategy``
+    against a steel ``steel_framing_strategy`` for the same region, not one
+    strategy's parameters.
+
+    The proposer is the only place the kinds are chosen; everything downstream —
+    validation, derivation, the batch solve, the mass metric, the ranking —
+    treats each candidate as an ordinary branch and assumes nothing about a
+    shared strategy. That an LLM proposer will emit exactly this shape (a slate
+    of dissimilar systems, each with a rationale) is why the seam stays fixed."""
+
+    def __init__(self, systems: list[Proposal], *, strategy: str = "system_choice") -> None:
+        if not systems:
+            raise ValueError("a system-choice proposer needs at least one candidate system")
+        self._systems = systems
+        self._strategy = strategy
+
+    @property
+    def ref(self) -> ProposerRef:
+        return ProposerRef(strategy=self._strategy, version=1)
+
+    def propose(self, exploration: Exploration, store: FileStore) -> list[Proposal]:
+        # The slate is one generation; then the exploration has converged.
+        return [] if exploration.generations else list(self._systems)
+
+
 def _the_framing_decision(exploration: Exploration, store: FileStore) -> Decision:
     snapshot = load_snapshot(store, exploration.base_commit)
     framings = [
