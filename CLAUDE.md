@@ -45,11 +45,15 @@ Push back when the engineering says otherwise.
   and the hand-calc verification suite (4 fixtures at 0.5%/0.1% tolerances) proven
   against the ADR 0003 direct-stiffness cross-check (`tests/reference_solver.py`),
   including an end-to-end derive→solve→hand-calc test.
-- **Blocker for acceptance test 3: xara has no Windows binaries** (the opensees wheel
-  ships Linux .so files; no Docker/WSL on this machine). The adapter and suite are
-  ready — earning the criterion needs a Linux run (CI, container, or WSL install,
-  which needs admin + reboot). PO to choose. Next increment otherwise: overrides
-  (increment 5).
+- **CI live (GitHub Actions, 2026-07-08): acceptance test 3 earned on Linux.** The
+  verification suite runs through the real xara engine on every push (89 passed
+  there; Windows runs the reference engine only, 1 skip). Milestone acceptance:
+  3 of 7. Engine platform facts, learned the hard way: xara needs CPython ≤ 3.13
+  (opensees wheels top out at cp313 — hence the 3.13 floor), Linux-only wheels,
+  and a Tcl 8.6 runtime (uv-managed CPython bundles Tcl 9; CI takes its
+  interpreter from actions/setup-python). Revisit when xara ships cp314/Windows
+  wheels. Next: increment 5, overrides (surveyed-anchor re-attachment:
+  attached/displaced/dangling per ADR 0005, provenance through derivation).
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =
