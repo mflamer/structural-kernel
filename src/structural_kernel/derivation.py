@@ -119,6 +119,10 @@ class Element(KernelModel):
     family: str
     section: str
     grade: str | None = None  # material grade (None for non-lumber, e.g. wall panels)
+    # How this member is designed — the method its material's code uses (ADR
+    # 0008). Wood is NDS/ASD; steel is AISC/LRFD. The solve-time checks read it
+    # to pick the demand combos (service vs factored) and the engine's method.
+    design_method: Literal["ASD", "LRFD"] = "ASD"
     start: Point
     end: Point
     length: Quantity
@@ -226,6 +230,10 @@ AnalysisLoad = Annotated[AnalysisLineLoad | AnalysisPointLoad, Field(discriminat
 class Combo(KernelModel):
     name: str
     factors: dict[str, float]
+    # Strength combos size members; service (unfactored) combos drive the
+    # deflection limits (loads.py). Under ASD the §2.4 combos are service-level
+    # and serve both; under LRFD the two diverge.
+    purpose: Literal["strength", "service"] = "strength"
 
 
 class AnalysisModel(KernelModel):
@@ -264,6 +272,7 @@ class _Member:
     end: tuple[float, float, float]
     tributary_m: float | None
     grade: str | None = None
+    design_method: Literal["ASD", "LRFD"] = "ASD"
     supports: list[str] = field(default_factory=list[str])
     intent: list[IntentInstance] = field(default_factory=list[IntentInstance])
     line_load_by_case: dict[str, float] = field(default_factory=dict[str, float])
@@ -331,6 +340,7 @@ def derive(
             family=m.family,
             section=m.section,
             grade=m.grade,
+            design_method=m.design_method,
             start=Point(x=_length_m(m.start[0]), y=_length_m(m.start[1]), z=_length_m(m.start[2])),
             end=Point(x=_length_m(m.end[0]), y=_length_m(m.end[1]), z=_length_m(m.end[2])),
             length=_length_m(_dist(m.start, m.end)),
@@ -964,6 +974,7 @@ def _analysis(
         supports=supports,
         loads=loads,
         combos=[
-            Combo(name=c.name, factors=c.factors) for c in combos_for(combo_set, frozenset(cases))
+            Combo(name=c.name, factors=c.factors, purpose=c.purpose)
+            for c in combos_for(combo_set, frozenset(cases))
         ],
     )

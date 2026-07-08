@@ -97,9 +97,11 @@ class AreaLoad(KernelModel):
 
 class LoadAssumptionsParams(KernelModel):
     area_loads: list[AreaLoad] = Field(min_length=1)
-    # Review Q2: ASD combos define unity in phase 1. A closed literal until a
-    # second combo set actually exists.
-    combo_set: Literal["ASCE7-22-2.4-ASD"]
+    # The combination set unity is measured against (loads.py is the engine).
+    # ASD for wood (NDS), LRFD for steel (AISC) — a closed literal over the sets
+    # loads.py can build; each candidate of a heterogeneous exploration selects
+    # the set its material's code requires.
+    combo_set: Literal["ASCE7-22-2.4-ASD", "ASCE7-22-2.3-LRFD"]
 
 
 # -- gravity framing strategy ------------------------------------------------------

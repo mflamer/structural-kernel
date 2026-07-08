@@ -38,6 +38,13 @@ _LIVE_DENOMINATOR = 360.0
 _TOTAL_DENOMINATOR = 240.0
 
 
+def _demand_purpose(design_method: str) -> str:
+    """The load-combination purpose a member's strength checks demand. ASD is an
+    allowable-stress method run on service-level loads; LRFD sizes on factored
+    strength combos (ADR 0008)."""
+    return "service" if design_method == "ASD" else "strength"
+
+
 class ProvisionFactor(KernelModel):
     symbol: str
     value: float
@@ -92,6 +99,7 @@ def run_design_checks(model: DerivedModel, result: SolveResult) -> DesignCheckRe
         raise ValueError("the derived model has no analysis artifact to check against")
 
     combo_cases = {c.name: set(c.factors) for c in model.analysis.combos}
+    combo_purpose = {c.name: c.purpose for c in model.analysis.combos}
     checks: list[DesignCheck] = []
 
     for combo_result in result.combos:
@@ -100,12 +108,17 @@ def run_design_checks(model: DerivedModel, result: SolveResult) -> DesignCheckRe
         for element in model.elements:
             if element.grade is None:
                 continue
+            # Strength checks consume the demand combos of the member's method:
+            # ASD sizes on service-level combos, LRFD on factored strength combos
+            # (ADR 0008). Deflection is a separate, always-service check below.
+            if combo_purpose.get(combo_result.combo) != _demand_purpose(element.design_method):
+                continue
             forces = forces_by_eid.get(element.eid)
             if forces is not None:
                 checks += _strength_checks(element, combo_result.combo, cases, forces)
 
-    checks += _deflection_checks(model, result)
-    checks += _post_checks(model, result, combo_cases)
+    checks += _deflection_checks(model, result, combo_purpose)
+    checks += _post_checks(model, result, combo_cases, combo_purpose)
 
     checks.sort(key=lambda c: (c.eid, c.combo, c.check))
     max_unity = max((c.unity for c in checks), default=0.0)
@@ -130,6 +143,7 @@ def _strength_checks(
             moment_nm=forces.max_abs_moment_nm,
             shear_n=forces.max_abs_shear_n,
             span_m=element.length.si_mag,
+            method=element.design_method,
             load_cases=cases,
             repetitive=element.role == "joist",
         )
@@ -159,11 +173,18 @@ def _design_check(element: Element, combo: str, data: object, category: str) -> 
     )
 
 
-def _deflection_checks(model: DerivedModel, result: SolveResult) -> list[DesignCheck]:
-    """L/360 live and L/240 total. Live deflection is the total-combo
-    deflection minus the dead-only deflection (linear superposition)."""
+def _deflection_checks(
+    model: DerivedModel, result: SolveResult, combo_purpose: dict[str, str]
+) -> list[DesignCheck]:
+    """L/360 live and L/240 total. Serviceability is a load-level check, so it
+    runs on the *service* (unfactored) combos regardless of the member-design
+    method — under LRFD the factored strength combos would overstate deflection
+    (ADR 0008). Live deflection is the total-combo deflection minus the dead-only
+    deflection (linear superposition)."""
     by_combo: dict[str, dict[str, float]] = {
-        c.combo: {m.source_eid: m.max_deflection_m for m in c.members} for c in result.combos
+        c.combo: {m.source_eid: m.max_deflection_m for m in c.members}
+        for c in result.combos
+        if combo_purpose.get(c.combo) == "service"
     }
     dead = by_combo.get("D", {})
     checks: list[DesignCheck] = []
@@ -207,18 +228,22 @@ def _deflection_checks(model: DerivedModel, result: SolveResult) -> list[DesignC
 
 
 def _post_checks(
-    model: DerivedModel, result: SolveResult, combo_cases: dict[str, set[str]]
+    model: DerivedModel,
+    result: SolveResult,
+    combo_cases: dict[str, set[str]],
+    combo_purpose: dict[str, str],
 ) -> list[DesignCheck]:
-    """Post axial demands come from the reactions of the members the load-path
-    graph says bear on the post — not everything near it, or the corner joist
-    (already smeared into the beam's tributary) would double-count."""
+    """Axial checks for the vertical members — wood posts and steel columns.
+    Their demands come from the reactions of the members the load-path graph
+    says bear on them — not everything near them, or the corner joist (already
+    smeared into the beam's tributary) would double-count."""
     assert model.analysis is not None
     node_xyz = {n.id: n.xyz_m for n in model.analysis.nodes}
     nodes_by_source = {e.source_eid: e.nodes for e in model.analysis.elements}
     checks: list[DesignCheck] = []
 
     for element in model.elements:
-        if element.role != "post" or element.grade is None:
+        if element.role not in ("post", "column") or element.grade is None:
             continue
         top = (element.end.x.si_mag, element.end.y.si_mag, element.end.z.si_mag)
         length = element.length.si_mag
@@ -230,6 +255,8 @@ def _post_checks(
             if node in node_xyz and _close(node_xyz[node], top)
         }
         for combo_result in result.combos:
+            if combo_purpose.get(combo_result.combo) != _demand_purpose(element.design_method):
+                continue
             axial = -sum(
                 reaction.f_n[2]
                 for reaction in combo_result.reactions
@@ -245,6 +272,7 @@ def _post_checks(
                     force_n=axial,
                     sense="compression",
                     unbraced_length_m=length,
+                    method=element.design_method,
                     load_cases=frozenset(combo_cases.get(combo_result.combo, set())),
                 )
             )
