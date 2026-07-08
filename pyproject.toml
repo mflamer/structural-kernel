@@ -12,12 +12,25 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The blessed engine (ADR 0003). No Windows binaries as of 2026-07: the
-# opensees wheel ships Linux .so files, so install this extra on Linux
-# (CI, container, WSL). The adapter import-guards; its tests skip when the
-# native runtime is absent.
+# The blessed engine (ADR 0003). Native wheels exist for Linux/macOS on
+# CPython <= 3.13 only (as of 2026-07), so the extra is marker-gated: on
+# 3.14 it resolves empty instead of dragging in an ancient opensees that
+# lacks the module xara imports. The opensees floor pins the resolver to
+# a version that actually carries opensees.openseespy. The adapter
+# import-guards; its tests skip when the native runtime is absent.
 xara = [
-    "xara>=0.0.13",
+    "xara>=0.0.13; python_version < '3.14' and sys_platform == 'linux'",
+    "opensees>=0.1.27; python_version < '3.14' and sys_platform == 'linux'",
+]
+
+[tool.uv]
+# Resolve only for CPython on real platforms: opensees declares a
+# PyPy/emscripten-only dependency (tcinter>=1.0) that does not exist on
+# PyPI, which otherwise poisons universal resolution.
+environments = [
+    "sys_platform == 'win32' and platform_python_implementation == 'CPython'",
+    "sys_platform == 'linux' and platform_python_implementation == 'CPython'",
+    "sys_platform == 'darwin' and platform_python_implementation == 'CPython'",
 ]
 
 [dependency-groups]
