@@ -69,6 +69,18 @@ def loads_params() -> LoadAssumptionsParams:
     )
 
 
+def lrfd_loads_params() -> LoadAssumptionsParams:
+    """Same area loads as the ASD builder, but selecting the ASCE 7-22 §2.3 LRFD
+    strength combinations the steel branch is designed to."""
+    return LoadAssumptionsParams(
+        area_loads=[
+            AreaLoad(case="D", magnitude=psf(15.0)),
+            AreaLoad(case="L", magnitude=psf(40.0)),
+        ],
+        combo_set="ASCE7-22-2.3-LRFD",
+    )
+
+
 def framing_params() -> GravityFramingStrategyParams:
     return GravityFramingStrategyParams(
         region=GridRegion(x_from=LX1, x_to=LX2, y_from=LY_A, y_to=LY_B),

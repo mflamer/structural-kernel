@@ -138,7 +138,7 @@ def _check_gravity_support_chain(
 
 
 def _grounded(element: Element) -> bool:
-    if element.role in ("post", "wall_segment"):
+    if element.role in ("post", "column", "wall_segment"):
         return True
     return abs(element.start.z.si_mag) < _EPS and abs(element.end.z.si_mag) < _EPS
 

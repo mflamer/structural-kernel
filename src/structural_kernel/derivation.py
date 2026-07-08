@@ -33,11 +33,13 @@ from structural_kernel.decisions import (
     ExceptionParams,
     GravityFramingStrategyParams,
     GridParams,
+    GridRegion,
     LateralStrategyParams,
     Level,
     LevelsParams,
     LoadAssumptionsParams,
     OpeningParams,
+    SteelFramingStrategyParams,
     parse_params,
 )
 from structural_kernel.eids import segment
@@ -100,7 +102,10 @@ class DanglingExceptionError(DerivationError):
 
 # -- derived model schema ---------------------------------------------------------
 
-ElementRole = Literal["joist", "beam", "post", "header", "wall_segment"]
+# joist/beam/post are the wood tiers; beam/girder/column the steel tiers (a steel
+# infill member is a "beam", so that role is shared). header and wall_segment are
+# induced elements. The two three-tier vocabularies share one geometry rule.
+ElementRole = Literal["joist", "beam", "post", "header", "wall_segment", "girder", "column"]
 
 
 def _length_m(mag: float) -> Quantity:
@@ -292,6 +297,42 @@ class _FramingContext:
     loads_dids: list[str]
 
 
+@dataclass(frozen=True)
+class _FramingVocab:
+    """The tier vocabulary a three-tier gravity frame is derived with. Wood and
+    steel share the geometry rule (``_derive_three_tier``) and differ only here:
+    which axis the infill members span, their spacing, the material engine and
+    grade, the design method, and the role/eid-token/section of each of the
+    three tiers (infill → mid → column)."""
+
+    span_axis: Literal["x", "y"]
+    spacing_m: float
+    family: str
+    grade: str
+    design_method: Literal["ASD", "LRFD"]
+    infill_role: ElementRole
+    infill_token: str
+    infill_section: str
+    mid_role: ElementRole
+    mid_token: str
+    mid_section: str
+    column_role: ElementRole
+    column_token: str
+    column_section: str
+
+
+@dataclass
+class _ThreeTier:
+    """The tier-neutral result of the shared geometry rule (wood wraps it into a
+    ``_FramingContext`` for the opening rule; steel discards it)."""
+
+    bearing_line_ids: tuple[str, str]
+    span_m: float
+    mid_eid_by_line: dict[str, str]
+    infills: list[tuple[str, float]]  # (eid, position along layout axis, m)
+    loads_dids: list[str]
+
+
 def derive(
     snapshot: ResolvedSnapshot,
     *,
@@ -317,6 +358,8 @@ def derive(
     for decision in resolved:
         if decision.kind == "gravity_framing_strategy":
             framings.append(_derive_framing(decision, decisions, members))
+        elif decision.kind == "steel_framing_strategy":
+            _derive_steel_framing(decision, decisions, members)
     for decision in resolved:
         if decision.kind == "opening":
             _derive_opening(decision, decisions, members, framings)
@@ -367,7 +410,7 @@ def derive(
     )
 
 
-# -- rule: gravity framing strategy -------------------------------------------------
+# -- rule: three-tier gravity framing (wood + steel share one geometry) ----------------
 
 
 def _derive_framing(
@@ -375,10 +418,81 @@ def _derive_framing(
     decisions: dict[str, Decision],
     members: dict[str, _Member],
 ) -> _FramingContext:
+    """Wood gravity framing: joists on beams on posts (design doc 0001 §3). The
+    geometry is the shared three-tier rule; this wraps its result into the
+    context the opening rule consumes (headers are induced over wood framing)."""
     params = parse_params(decision)
     assert isinstance(params, GravityFramingStrategyParams)
+    vocab = _FramingVocab(
+        span_axis=params.joist_axis,
+        spacing_m=params.joist_spacing.si_mag,
+        family=params.member_family,
+        grade=params.member_grade,
+        design_method="ASD",
+        infill_role="joist",
+        infill_token="jst",
+        infill_section=params.joist_section,
+        mid_role="beam",
+        mid_token="bm",
+        mid_section=params.beam_section,
+        column_role="post",
+        column_token="pst",
+        column_section=params.post_section,
+    )
+    tier = _derive_three_tier(decision, decisions, members, params.region, vocab)
+    return _FramingContext(
+        decision=decision,
+        params=params,
+        bearing_line_ids=tier.bearing_line_ids,
+        joist_span_m=tier.span_m,
+        beam_eid_by_line=tier.mid_eid_by_line,
+        joists=tier.infills,
+        loads_dids=tier.loads_dids,
+    )
+
+
+def _derive_steel_framing(
+    decision: Decision,
+    decisions: dict[str, Decision],
+    members: dict[str, _Member],
+) -> None:
+    """Steel gravity framing (ADR 0008): infill beams on girders on columns —
+    the same three-tier geometry as wood, designed AISC/LRFD with the roof deck
+    bracing the beams continuously. Not wrapped for the opening rule; steel
+    headers are a later increment."""
+    params = parse_params(decision)
+    assert isinstance(params, SteelFramingStrategyParams)
+    vocab = _FramingVocab(
+        span_axis=params.beam_axis,
+        spacing_m=params.beam_spacing.si_mag,
+        family=params.member_family,
+        grade=params.member_grade,
+        design_method="LRFD",
+        infill_role="beam",
+        infill_token="bm",
+        infill_section=params.beam_section,
+        mid_role="girder",
+        mid_token="gdr",
+        mid_section=params.girder_section,
+        column_role="column",
+        column_token="col",
+        column_section=params.column_section,
+    )
+    _derive_three_tier(decision, decisions, members, params.region, vocab)
+
+
+def _derive_three_tier(
+    decision: Decision,
+    decisions: dict[str, Decision],
+    members: dict[str, _Member],
+    region: GridRegion,
+    vocab: _FramingVocab,
+) -> _ThreeTier:
+    """Infill members span the bearing lines at a spacing, bearing on mid
+    members that run along the perpendicular lines, bearing on columns at the
+    region corners. Wood and steel differ only in ``vocab``; the eid grammar
+    (ADR 0005) and tributary tiling are proven once, here."""
     lines = _grid_lines_in_deps(decision, decisions)
-    region = params.region
     for ref in (region.x_from, region.x_to, region.y_from, region.y_to):
         if ref not in lines:
             raise DerivationError(
@@ -388,7 +502,7 @@ def _derive_framing(
     x0, x1 = sorted((lines[region.x_from][1], lines[region.x_to][1]))
     y0, y1 = sorted((lines[region.y_from][1], lines[region.y_to][1]))
     layout_axis: str
-    if params.joist_axis == "y":
+    if vocab.span_axis == "y":
         span_lines = (region.y_from, region.y_to)
         layout_lines = (region.x_from, region.x_to)
         span_m, layout_m = y1 - y0, x1 - x0
@@ -400,9 +514,9 @@ def _derive_framing(
         layout_axis = "y"
     if span_m <= 0.0 or layout_m <= 0.0:
         raise DerivationError(f"framing {decision.did}: region has zero extent")
-    spacing_m = params.joist_spacing.si_mag
+    spacing_m = vocab.spacing_m
     if spacing_m <= 0.0:
-        raise DerivationError(f"framing {decision.did}: joist spacing must be positive")
+        raise DerivationError(f"framing {decision.did}: infill spacing must be positive")
 
     elevation_m = _elevation_in_deps(decision, decisions)
     loads = _area_loads_in_deps(decision, decisions)
@@ -412,6 +526,7 @@ def _derive_framing(
         if d.kind == "load_assumptions" and d.state == "resolved"
     )
     carries = [IntentRelation(role="carries", target=LoadTarget(load=did)) for did in loads_dids]
+    e_pa = _grade_e(vocab.family, vocab.grade, decision.did)
 
     def gravity_intent() -> IntentInstance:
         return IntentInstance(
@@ -421,8 +536,8 @@ def _derive_framing(
         )
 
     def serviceability_intent() -> IntentInstance:
-        # Review Q3: L/360 live and L/240 total are hard phase-1 limits; the
-        # solve-time deflection checks cite this instance (ADR 0004).
+        # Review Q3: L/360 live and L/240 total are hard limits; the solve-time
+        # deflection checks cite this instance (ADR 0004).
         return IntentInstance(
             category="serviceability",
             payload={"live": "L/360", "total": "L/240"},
@@ -442,13 +557,14 @@ def _derive_framing(
 
     span_low = min(lines[span_lines[0]][1], lines[span_lines[1]][1])
     span_anchor = "-".join(sorted(span_lines))
-    joists: list[tuple[str, float]] = []
+    infills: list[tuple[str, float]] = []
     for ordinal, distance in enumerate(positions):
         left = distance - positions[ordinal - 1] if ordinal > 0 else 0.0
         right = positions[ordinal + 1] - distance if ordinal + 1 < len(positions) else 0.0
         tributary = (left + right) / 2.0
         coord = origin_m + direction * distance
-        eid = segment("jst", decision.did, f"{span_anchor}.{origin_line}+{ordinal:03d}")
+        anchor = f"{span_anchor}.{origin_line}+{ordinal:03d}"
+        eid = segment(vocab.infill_token, decision.did, anchor)
         if layout_axis == "x":
             start = (coord, span_low, elevation_m)
             end = (coord, span_low + span_m, elevation_m)
@@ -457,25 +573,26 @@ def _derive_framing(
             end = (span_low + span_m, coord, elevation_m)
         members[eid] = _Member(
             eid=eid,
-            role="joist",
-            family=params.member_family,
-            section=params.joist_section,
-            grade=params.member_grade,
+            role=vocab.infill_role,
+            family=vocab.family,
+            section=vocab.infill_section,
+            grade=vocab.grade,
+            design_method=vocab.design_method,
             start=start,
             end=end,
             tributary_m=tributary,
             intent=[gravity_intent(), serviceability_intent()],
             line_load_by_case={case: q * tributary for case, q in loads.items()},
             flexural=True,
-            e_pa=_grade_e(params, decision),
+            e_pa=e_pa,
         )
-        joists.append((eid, coord))
+        infills.append((eid, coord))
 
     layout_low = min(origin_m, far_m)
     layout_anchor = "-".join(sorted(layout_lines))
-    beam_eid_by_line: dict[str, str] = {}
+    mid_eid_by_line: dict[str, str] = {}
     for bearing_line in span_lines:
-        eid = segment("bm", decision.did, f"{bearing_line}.{layout_anchor}")
+        eid = segment(vocab.mid_token, decision.did, f"{bearing_line}.{layout_anchor}")
         bearing_m = lines[bearing_line][1]
         if layout_axis == "x":
             start = (layout_low, bearing_m, elevation_m)
@@ -485,58 +602,58 @@ def _derive_framing(
             end = (bearing_m, layout_low + layout_m, elevation_m)
         members[eid] = _Member(
             eid=eid,
-            role="beam",
-            family=params.member_family,
-            section=params.beam_section,
-            grade=params.member_grade,
+            role=vocab.mid_role,
+            family=vocab.family,
+            section=vocab.mid_section,
+            grade=vocab.grade,
+            design_method=vocab.design_method,
             start=start,
             end=end,
             tributary_m=span_m / 2.0,
             intent=[gravity_intent(), serviceability_intent()],
             line_load_by_case={case: q * span_m / 2.0 for case, q in loads.items()},
             flexural=True,
-            e_pa=_grade_e(params, decision),
+            e_pa=e_pa,
         )
-        beam_eid_by_line[bearing_line] = eid
+        mid_eid_by_line[bearing_line] = eid
 
-    posts_by_corner: dict[tuple[str, str], str] = {}
+    columns_by_corner: dict[tuple[str, str], str] = {}
     if elevation_m > 0.0:
         for span_line in span_lines:
             for layout_line in layout_lines:
                 anchor = ".".join(sorted((span_line, layout_line)))
-                eid = segment("pst", decision.did, anchor)
+                eid = segment(vocab.column_token, decision.did, anchor)
                 if layout_axis == "x":
                     xy = (lines[layout_line][1], lines[span_line][1])
                 else:
                     xy = (lines[span_line][1], lines[layout_line][1])
                 members[eid] = _Member(
                     eid=eid,
-                    role="post",
-                    family=params.member_family,
-                    section=params.post_section,
-                    grade=params.member_grade,
+                    role=vocab.column_role,
+                    family=vocab.family,
+                    section=vocab.column_section,
+                    grade=vocab.grade,
+                    design_method=vocab.design_method,
                     start=(xy[0], xy[1], 0.0),
                     end=(xy[0], xy[1], elevation_m),
                     tributary_m=None,
                     intent=[gravity_intent()],
-                    e_pa=_grade_e(params, decision),
+                    e_pa=e_pa,
                 )
-                posts_by_corner[(span_line, layout_line)] = eid
-        for bearing_line, beam_eid in beam_eid_by_line.items():
-            members[beam_eid].supports = sorted(
-                posts_by_corner[(bearing_line, layout_line)] for layout_line in layout_lines
+                columns_by_corner[(span_line, layout_line)] = eid
+        for bearing_line, mid_eid in mid_eid_by_line.items():
+            members[mid_eid].supports = sorted(
+                columns_by_corner[(bearing_line, layout_line)] for layout_line in layout_lines
             )
 
-    for joist_eid, _ in joists:
-        members[joist_eid].supports = sorted(beam_eid_by_line.values())
+    for infill_eid, _ in infills:
+        members[infill_eid].supports = sorted(mid_eid_by_line.values())
 
-    return _FramingContext(
-        decision=decision,
-        params=params,
+    return _ThreeTier(
         bearing_line_ids=span_lines,
-        joist_span_m=span_m,
-        beam_eid_by_line=beam_eid_by_line,
-        joists=joists,
+        span_m=span_m,
+        mid_eid_by_line=mid_eid_by_line,
+        infills=infills,
         loads_dids=loads_dids,
     )
 
@@ -634,7 +751,9 @@ def _derive_opening(
         ],
         line_load_by_case={case: q * tributary for case, q in loads.items()},
         flexural=True,
-        e_pa=_grade_e(framing.params, framing.decision),
+        e_pa=_grade_e(
+            framing.params.member_family, framing.params.member_grade, framing.decision.did
+        ),
     )
 
     for joist_eid in redirected:
@@ -862,13 +981,12 @@ def _area_loads_in_deps(decision: Decision, decisions: dict[str, Decision]) -> d
     return loads
 
 
-def _grade_e(params: GravityFramingStrategyParams, decision: Decision) -> float:
-    engine = engine_for(params.member_family)
-    e_pa = engine.elastic_modulus_pa(params.member_grade)
+def _grade_e(family: str, grade: str, did: str) -> float:
+    engine = engine_for(family)
+    e_pa = engine.elastic_modulus_pa(grade)
     if e_pa is None:
         raise DerivationError(
-            f"framing {decision.did}: {engine.family} grade {params.member_grade!r} "
-            "has no reference modulus"
+            f"framing {did}: {engine.family} grade {grade!r} has no reference modulus"
         )
     return e_pa
 
