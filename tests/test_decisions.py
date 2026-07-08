@@ -15,6 +15,7 @@ from conftest import (
     loads_params,
     opening_params,
     psf,
+    steel_framing_params,
 )
 from structural_kernel.decisions import (
     ExceptionParams,
@@ -22,6 +23,7 @@ from structural_kernel.decisions import (
     GridLine,
     GridParams,
     LoadAssumptionsParams,
+    SteelFramingStrategyParams,
     line_refs,
     parse_params,
 )
@@ -33,6 +35,7 @@ def test_every_milestone_kind_round_trips_through_parse_params() -> None:
         ("levels", levels_params()),
         ("load_assumptions", loads_params()),
         ("gravity_framing_strategy", framing_params()),
+        ("steel_framing_strategy", steel_framing_params()),
         ("lateral_strategy", lateral_params()),
         ("opening", opening_params()),
         (
@@ -102,5 +105,22 @@ def test_line_refs_extraction() -> None:
     assert line_refs(parse_params(decision("grid", "g", grid_params()))) == set()
     framing = parse_params(decision("gravity_framing_strategy", "f", framing_params()))
     assert line_refs(framing) == {LX1, LX2, "L000000B1", "L000000B2"}
+    steel = parse_params(decision("steel_framing_strategy", "s", steel_framing_params()))
+    assert line_refs(steel) == {LX1, LX2, "L000000B1", "L000000B2"}
     opening = parse_params(decision("opening", "o", opening_params()))
     assert line_refs(opening) == {"L000000B1", LX1}
+
+
+def test_steel_framing_rejects_an_unregistered_material_family() -> None:
+    with pytest.raises(ValidationError, match="no registered design-check engine"):
+        SteelFramingStrategyParams.model_validate(
+            steel_framing_params().model_dump(mode="json") | {"member_family": "titanium"}
+        )
+
+
+def test_steel_framing_rejects_a_mis_dimensioned_spacing() -> None:
+    with pytest.raises(ValidationError):  # beam spacing must be a length, not a pressure
+        SteelFramingStrategyParams.model_validate(
+            steel_framing_params().model_dump(mode="json")
+            | {"beam_spacing": psf(40.0).model_dump()}
+        )

@@ -135,6 +135,38 @@ class GravityFramingStrategyParams(KernelModel):
     post_section: Name
 
 
+# -- steel framing strategy --------------------------------------------------------
+
+
+class SteelFramingStrategyParams(KernelModel):
+    """A three-tier steel gravity frame (ADR 0008): infill beams → girders →
+    columns. Beams span ``beam_axis`` at ``beam_spacing``, bearing on girders
+    that run on the two perpendicular bearing lines; girders span between
+    columns at the region corners.
+
+    Designed to AISC 360-22 **LRFD** (Mark's call): the steel branch of a
+    heterogeneous exploration carries LRFD strength combinations, while the wood
+    branch stays NDS/ASD — each system to its own code, ranked on the
+    method-neutral mass metric. The roof deck braces the beam compression flange
+    continuously (Lb=0), so flexure reaches the full plastic moment.
+    """
+
+    region: GridRegion
+    system: Literal["beams_on_girders_on_columns"]
+    beam_axis: Literal["x", "y"]  # the axis infill beams span along
+    beam_spacing: LengthQuantity
+    # ADR 0007 registry key — validated against the registered catalog engines,
+    # the same posture as gravity_framing_strategy. A steel_framing_strategy
+    # names a steel family (e.g. "hot_rolled_steel"); the kind, not this field,
+    # is what makes it steel.
+    member_family: MaterialFamily
+    member_grade: Name  # e.g. "A992"
+    # W-shape designations per tier; explorations vary them (standing req. 1).
+    beam_section: Name
+    girder_section: Name
+    column_section: Name
+
+
 # -- lateral strategy ---------------------------------------------------------------
 
 
@@ -180,6 +212,7 @@ DecisionParams = (
     | LevelsParams
     | LoadAssumptionsParams
     | GravityFramingStrategyParams
+    | SteelFramingStrategyParams
     | LateralStrategyParams
     | OpeningParams
     | ExceptionParams
@@ -205,6 +238,8 @@ def parse_params(decision: Decision) -> DecisionParams | None:
             return LoadAssumptionsParams.model_validate(payload)
         case "gravity_framing_strategy":
             return GravityFramingStrategyParams.model_validate(payload)
+        case "steel_framing_strategy":
+            return SteelFramingStrategyParams.model_validate(payload)
         case "lateral_strategy":
             return LateralStrategyParams.model_validate(payload)
         case "opening":
@@ -220,7 +255,7 @@ def line_refs(params: DecisionParams | None) -> set[str]:
     integrity substrate for ADR 0005 E3 (a referenced line cannot be deleted
     out from under its referrers)."""
     match params:
-        case GravityFramingStrategyParams():
+        case GravityFramingStrategyParams() | SteelFramingStrategyParams():
             region = params.region
             return {region.x_from, region.x_to, region.y_from, region.y_to}
         case LateralStrategyParams():

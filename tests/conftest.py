@@ -13,6 +13,7 @@ from structural_kernel.decisions import (
     LevelsParams,
     LoadAssumptionsParams,
     OpeningParams,
+    SteelFramingStrategyParams,
 )
 from structural_kernel.ids import new_ulid
 from structural_kernel.objects import Author, Decision, KernelModel
@@ -79,6 +80,22 @@ def framing_params() -> GravityFramingStrategyParams:
         joist_section="2x10",
         beam_section="4x12",
         post_section="4x4",
+    )
+
+
+def steel_framing_params() -> SteelFramingStrategyParams:
+    """A three-tier steel frame over the same region as the wood framing —
+    beams span y at 6 ft, on girders on lines A/B, on columns at the corners."""
+    return SteelFramingStrategyParams(
+        region=GridRegion(x_from=LX1, x_to=LX2, y_from=LY_A, y_to=LY_B),
+        system="beams_on_girders_on_columns",
+        beam_axis="y",
+        beam_spacing=ft(6.0),
+        member_family="hot_rolled_steel",
+        member_grade="A992",
+        beam_section="W10x12",
+        girder_section="W12x16",
+        column_section="W8x24",
     )
 
 
