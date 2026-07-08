@@ -43,8 +43,10 @@ three-tier framing, continuous top-flange bracing, and AISC **LRFD**.
 
 - **Continuous bracing.** The roof deck braces the beam compression flange
   continuously (Lb = 0, Cb = 1.0), so flexure reaches the full plastic moment.
-  A domain assumption, PO-chosen; revisit when a real bracing model (spandrels,
-  Lb at framing points) exists. Flagged, not a code constant.
+  A domain assumption, PO-chosen and **confirmed correct for now (2026-07-08)**;
+  revisit when a real bracing model (spandrels, Lb at framing points) exists.
+  Flagged, not a code constant — realized by the flexure check's default
+  `unbraced_length_m = 0`, the same posture wood takes for sheathed members.
 
 - **Load combinations carry a `purpose` (strength | service).** LRFD needs ASCE
   7-22 §2.3 strength combinations, and deflection — a serviceability limit — is
