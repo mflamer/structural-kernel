@@ -2,7 +2,10 @@
 name = "structural-kernel"
 version = "0.0.1"
 description = "AI-native structural building model kernel: decision graph, derivation, solver service, exploration loop"
-requires-python = ">=3.14"
+# Dev toolchain is 3.14; the floor is 3.13 because the blessed engine's
+# native wheels (opensees, pulled by xara) top out at cp313 as of 2026-07.
+# Raise the floor when xara ships cp314 wheels.
+requires-python = ">=3.13"
 license = "LicenseRef-Proprietary"
 dependencies = [
     "pydantic>=2.11",
@@ -35,11 +38,11 @@ packages = ["src/structural_kernel"]
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "strict"
-pythonVersion = "3.14"
+pythonVersion = "3.13"  # the support floor — keeps 3.14-only usage out
 reportMissingTypeStubs = true
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py313"
 line-length = 100
 src = ["src", "tests"]
 
