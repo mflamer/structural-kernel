@@ -52,8 +52,16 @@ Push back when the engineering says otherwise.
   (opensees wheels top out at cp313 — hence the 3.13 floor), Linux-only wheels,
   and a Tcl 8.6 runtime (uv-managed CPython bundles Tcl 9; CI takes its
   interpreter from actions/setup-python). Revisit when xara ships cp314/Windows
-  wheels. Next: increment 5, overrides (surveyed-anchor re-attachment:
-  attached/displaced/dangling per ADR 0005, provenance through derivation).
+  wheels.
+- **Increment 5 done** (2026-07-08): reality overrides — the §5 composition rule
+  (derive on decisions → override substitution → downstream artifacts), ADR 0005
+  re-attachment states (attached / displaced / dangling with candidate re-targets),
+  confidence-bucketed tolerances (measured 25mm / estimated 150mm / assumed
+  advisory), provenance on every overridden field flowing into bill + analysis,
+  and displaced/dangling surfaced as commit *warnings* (never rejections, never
+  dropped). Milestone acceptance: 4 of 7. Next: increment 6, intent checkers +
+  solve-time design checks (NDS ASD unity + L/360–L/240 deflection, both citing
+  intent per ADR 0004) — earns acceptance test 5.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =

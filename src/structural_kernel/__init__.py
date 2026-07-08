@@ -11,6 +11,7 @@ from structural_kernel.derivation import (
     AnalysisModel,
     DerivationError,
     DerivedModel,
+    OverrideAttachment,
     derive,
 )
 from structural_kernel.eids import render_eid
@@ -65,6 +66,7 @@ __all__ = [
     "LocalSolverService",
     "ObjectHash",
     "Override",
+    "OverrideAttachment",
     "OverrideSet",
     "ProposeResult",
     "Quantity",

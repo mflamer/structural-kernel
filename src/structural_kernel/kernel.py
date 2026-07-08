@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
-from structural_kernel.derivation import DanglingExceptionError, DerivationError, derive
+from structural_kernel.derivation import (
+    DanglingExceptionError,
+    DerivationError,
+    OverrideAttachment,
+    derive,
+)
 from structural_kernel.ids import ObjectHash
 from structural_kernel.objects import (
     Author,
@@ -92,7 +97,7 @@ def propose(
 
     # Stage 3: derivation dry-run — nothing that cannot derive ever commits.
     try:
-        derive(result, snapshot_hash=resolved_snapshot_hash(result))
+        derived = derive(result, snapshot_hash=resolved_snapshot_hash(result))
     except DanglingExceptionError as exc:
         return _reject(
             store,
@@ -124,7 +129,54 @@ def propose(
             ],
         )
 
-    return _commit(store, changeset, result, author, message, timestamp, ref, current)
+    # Overrides that no longer attach cleanly are warnings on the commit —
+    # never rejections, never silently dropped (§5). They recompute on every
+    # commit, so they persist until a human resolves them.
+    warnings = [
+        _attachment_warning(a) for a in derived.override_attachments if a.state != "attached"
+    ]
+
+    return _commit(store, changeset, result, author, message, timestamp, ref, current, warnings)
+
+
+def _attachment_warning(attachment: OverrideAttachment) -> ValidationIssue:
+    target = attachment.target
+    provenance = attachment.provenance
+    surveyed = (
+        f"surveyed by {provenance.observed_by} ({provenance.method}, "
+        f"{provenance.observed_at}, {provenance.confidence})"
+    )
+    if attachment.state == "dangling":
+        hint = (
+            f"; candidate re-targets: {', '.join(attachment.candidates)}"
+            if attachment.candidates
+            else ""
+        )
+        message = (
+            f"override on {target.eid}.{target.field} is dangling — the element no "
+            f"longer exists; {surveyed}{hint}"
+        )
+        code: Literal["dangling_override", "displaced_override"] = "dangling_override"
+    else:
+        assert attachment.distance_m is not None
+        message = (
+            f"override on {target.eid}.{target.field} is displaced — the member is "
+            f"{attachment.distance_m:.3f} m from the surveyed anchor (it moved with "
+            f"the model; the surveyed member did not); {surveyed}"
+        )
+        code = "displaced_override"
+    return ValidationIssue(
+        code=code,
+        severity="warning",
+        message=message,
+        detail={
+            "eid": target.eid,
+            "field": target.field,
+            "state": attachment.state,
+            "distance_m": attachment.distance_m,
+            "candidates": list(attachment.candidates),
+        },
+    )
 
 
 def load_snapshot(store: FileStore, commit_hash: str | None) -> ResolvedSnapshot:
@@ -154,6 +206,7 @@ def _commit(
     timestamp: Timestamp,
     ref: str,
     parent: str | None,
+    warnings: list[ValidationIssue],
 ) -> ProposeResult:
     changeset_hash = store.put_model(changeset)
     snapshot = Snapshot(
@@ -189,12 +242,13 @@ def _commit(
                 )
             ],
         )
-    report = ValidationReport(changeset=changeset_hash, outcome="committed")
+    report = ValidationReport(changeset=changeset_hash, outcome="committed", issues=warnings)
     return ProposeResult(
         outcome="committed",
         changeset=changeset_hash,
         report=store.put_model(report),
         commit=commit_hash,
+        issues=warnings,
     )
 
 

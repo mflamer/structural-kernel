@@ -47,6 +47,8 @@ IssueCode = Literal[
     "unknown_decision_ref",
     "derivation_failure",
     "dangling_exception",
+    "dangling_override",
+    "displaced_override",
     "stale_base",
 ]
 

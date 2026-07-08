@@ -23,7 +23,17 @@ from conftest import (
 )
 from structural_kernel.derivation import derive
 from structural_kernel.kernel import load_snapshot, propose
-from structural_kernel.objects import AddDecision, Changeset, Commit, Decision, Snapshot
+from structural_kernel.objects import (
+    AddDecision,
+    AddOverride,
+    Changeset,
+    Commit,
+    Decision,
+    Override,
+    OverrideProvenance,
+    OverrideTarget,
+    Snapshot,
+)
 from structural_kernel.solver import LocalSolverService
 from structural_kernel.store import FileStore
 from structural_kernel.xara_adapter import XaraEngine, xara_available
@@ -141,11 +151,59 @@ def test_solver_results_verify_against_hand_calcs(tmp_path: Path) -> None:
     assert member.max_abs_moment_nm == pytest.approx(w * span**2 / 8, rel=0.005)
 
 
-@_increment("overrides")
-def test_surveyed_override_flows_through_with_provenance() -> None:
+def test_surveyed_override_flows_through_with_provenance(tmp_path: Path) -> None:
     """A pinned surveyed member size differing from the derived value flows
-    through derivation and analysis with provenance intact."""
-    raise NotImplementedError
+    through derivation and analysis with provenance intact.
+    (Earned in increment 5.)"""
+    store = FileStore(tmp_path)
+    structure = _commit_milestone_structure(store)
+    framing = next(d for d in structure if d.kind == "gravity_framing_strategy")
+    joist_eid = next(
+        e.eid
+        for e in derive(
+            load_snapshot(store, store.read_ref("main")),
+            snapshot_hash="sha256:" + "0" * 64,
+        ).elements
+        if e.role == "joist" and e.eid.endswith("+004")
+    )
+    assert framing.params is not None and framing.params["joist_section"] == "2x10"
+
+    override = Override(
+        target=OverrideTarget(eid=joist_eid, field="section"),
+        value="4x10",
+        provenance=OverrideProvenance(
+            observed_by="M. Flamer",
+            method="site_survey_tape",
+            observed_at="2026-06-30",
+            confidence="measured",
+        ),
+    )
+    result = propose(
+        store,
+        Changeset(base_commit=store.read_ref("main"), ops=[AddOverride(override=override)]),
+        author=AUTHOR,
+        message="pin surveyed joist size",
+        timestamp=T0,
+    )
+    assert result.outcome == "committed", result.issues
+
+    tip = store.read_ref("main")
+    assert tip is not None
+    commit = store.get_model(tip, Commit)
+    model = derive(load_snapshot(store, tip), snapshot_hash=commit.snapshot)
+
+    [element] = [e for e in model.elements if e.eid == joist_eid]
+    assert element.section == "4x10"  # differs from the derived 2x10
+    assert element.overridden["section"].observed_by == "M. Flamer"
+    assert element.overridden["section"].confidence == "measured"
+    [attachment] = model.override_attachments
+    assert attachment.state == "attached"
+
+    # and it flows into analysis stiffness exactly as if derived
+    assert model.analysis is not None
+    analysis_element = next(e for e in model.analysis.elements if e.source_eid == joist_eid)
+    b, d = 3.5 * 0.0254, 9.25 * 0.0254  # dressed 4x10
+    assert abs(analysis_element.I_strong_m4 - b * d**3 / 12) < 1e-12
 
 
 @_increment("intent checkers + solve-time design checks")

@@ -23,8 +23,9 @@ solve. The artifact schema (§7.1) uses SI-suffixed field names by design.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import Field
 
@@ -51,6 +52,11 @@ from structural_kernel.objects import (
     IntentRelation,
     KernelModel,
     LoadTarget,
+    Override,
+    OverrideProvenance,
+    OverrideSet,
+    OverrideTarget,
+    SurveyedAnchor,
 )
 from structural_kernel.sections import grade_e_pa, sawn_section
 from structural_kernel.units import Quantity
@@ -59,6 +65,17 @@ from structural_kernel.validation import ResolvedSnapshot
 DERIVATION_VERSION = 1
 
 _HEADER_BEARING_M = 0.0762  # 3 in each side, span taken center-to-center of bearing
+
+# Re-attachment tolerance by provenance confidence (ADR 0005). "assumed" is
+# advisory — an assumption is not a measurement of position, so it never
+# displaces. An explicit tolerance on the anchor overrides the bucket.
+_CONFIDENCE_TOLERANCE_M: Final[dict[str, float]] = {
+    "measured": 0.025,  # ~1 in
+    "estimated": 0.150,  # ~6 in
+    "assumed": math.inf,
+}
+_CANDIDATE_RADIUS_M: Final = 1.0
+_MAX_CANDIDATES: Final = 3
 
 
 class DerivationError(Exception):
@@ -106,6 +123,19 @@ class Element(KernelModel):
     tributary_width: Quantity | None = None
     supports: list[Eid] = Field(default_factory=list[str])  # eids that carry this element
     intent: list[IntentInstance] = Field(default_factory=list[IntentInstance])
+    # Reality override provenance, by overridden field (design doc §5): every
+    # overridden value carries who measured it into every consuming artifact.
+    overridden: dict[str, OverrideProvenance] = Field(default_factory=dict[str, OverrideProvenance])
+
+
+class OverrideAttachment(KernelModel):
+    """How one reality override attached to this derived model (ADR 0005)."""
+
+    target: OverrideTarget
+    state: Literal["attached", "displaced", "dangling"]
+    provenance: OverrideProvenance
+    distance_m: float | None = None  # anchor-to-member distance, when an anchor exists
+    candidates: list[Eid] = Field(default_factory=list[str])  # re-target hints
 
 
 class LoadPathEdge(KernelModel):
@@ -216,6 +246,7 @@ class DerivedModel(KernelModel):
     open_decisions: list[OpenDecisionRef]
     bill: BillOfElements
     analysis: AnalysisModel | None  # absence is a valid state (partial models)
+    override_attachments: list[OverrideAttachment] = Field(default_factory=list[OverrideAttachment])
 
 
 # -- mutable working representation -----------------------------------------------
@@ -235,6 +266,7 @@ class _Member:
     line_load_by_case: dict[str, float] = field(default_factory=dict[str, float])
     flexural: bool = False
     e_pa: float | None = None
+    overridden: dict[str, OverrideProvenance] = field(default_factory=dict[str, OverrideProvenance])
 
 
 @dataclass
@@ -283,6 +315,11 @@ def derive(
         if decision.kind == "exception":
             _apply_exception(decision, members)
 
+    # Composition rule (§5): derivation runs entirely on decisions, *then* the
+    # override set is applied as a final substitution pass, *then* downstream
+    # artifacts are computed from the overridden model.
+    override_attachments = _apply_overrides(members, snapshot.overrides)
+
     ordered = [members[eid] for eid in sorted(members)]
     elements = [
         Element(
@@ -296,6 +333,7 @@ def derive(
             tributary_width=None if m.tributary_m is None else _length_m(m.tributary_m),
             supports=sorted(m.supports),
             intent=m.intent,
+            overridden=m.overridden,
         )
         for m in ordered
     ]
@@ -311,6 +349,7 @@ def derive(
         open_decisions=open_refs,
         bill=_bill(elements, load_path),
         analysis=_analysis(ordered, provenance),
+        override_attachments=override_attachments,
     )
 
 
@@ -632,6 +671,116 @@ def _apply_exception(decision: Decision, members: dict[str, _Member]) -> None:
             f"exception {decision.did}: a section exception's value must be a designation string"
         )
     target.section = params.value
+
+
+# -- reality overrides: the final substitution pass (§5, ADR 0005) ----------------------
+
+
+def _apply_overrides(
+    members: dict[str, _Member], override_set: OverrideSet
+) -> list[OverrideAttachment]:
+    attachments: list[OverrideAttachment] = []
+    for override in sorted(override_set.overrides, key=lambda o: (o.target.eid, o.target.field)):
+        member = members.get(override.target.eid)
+        if member is None:
+            # Dangling: reality that no longer attaches to the model. Warn,
+            # stay inert, propose near-matches when a surveyed anchor exists.
+            attachments.append(
+                OverrideAttachment(
+                    target=override.target,
+                    state="dangling",
+                    provenance=override.provenance,
+                    candidates=_near_candidates(members, override.surveyed_anchor),
+                )
+            )
+            continue
+
+        distance: float | None = None
+        if override.surveyed_anchor is not None:
+            distance = _point_segment_distance(
+                _anchor_point(override.surveyed_anchor), member.start, member.end
+            )
+            if distance > _tolerance_m(override):
+                # Displaced: the eid persists but the geometry moved out from
+                # under the surveyed point — applying the measurement would
+                # risk attributing it to the wrong physical member. Inert.
+                attachments.append(
+                    OverrideAttachment(
+                        target=override.target,
+                        state="displaced",
+                        provenance=override.provenance,
+                        distance_m=distance,
+                    )
+                )
+                continue
+
+        _substitute(member, override)
+        attachments.append(
+            OverrideAttachment(
+                target=override.target,
+                state="attached",
+                provenance=override.provenance,
+                distance_m=distance,
+            )
+        )
+    return attachments
+
+
+def _substitute(member: _Member, override: Override) -> None:
+    if override.target.field != "section":
+        raise DerivationError(
+            f"override on {override.target.eid}: field {override.target.field!r} "
+            "is not overridable in phase 1"
+        )
+    if not isinstance(override.value, str):
+        raise DerivationError(
+            f"override on {override.target.eid}: a section override's value must be "
+            "a designation string"
+        )
+    member.section = override.value
+    member.overridden[override.target.field] = override.provenance
+
+
+def _tolerance_m(override: Override) -> float:
+    anchor = override.surveyed_anchor
+    assert anchor is not None
+    if anchor.tolerance is not None:
+        return anchor.tolerance.si_mag
+    return _CONFIDENCE_TOLERANCE_M[override.provenance.confidence]
+
+
+def _anchor_point(anchor: SurveyedAnchor) -> tuple[float, float, float]:
+    return (anchor.x.si_mag, anchor.y.si_mag, anchor.z.si_mag)
+
+
+def _near_candidates(members: dict[str, _Member], anchor: SurveyedAnchor | None) -> list[str]:
+    if anchor is None:
+        return []
+    point = _anchor_point(anchor)
+    scored = sorted(
+        (distance, eid)
+        for eid, member in members.items()
+        if (distance := _point_segment_distance(point, member.start, member.end))
+        <= _CANDIDATE_RADIUS_M
+    )
+    return [eid for _, eid in scored[:_MAX_CANDIDATES]]
+
+
+def _point_segment_distance(
+    p: tuple[float, float, float],
+    a: tuple[float, float, float],
+    b: tuple[float, float, float],
+) -> float:
+    ab = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    ap = (p[0] - a[0], p[1] - a[1], p[2] - a[2])
+    ab_sq = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2
+    t = (
+        0.0
+        if ab_sq == 0.0
+        else max(0.0, min(1.0, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / ab_sq))
+    )
+    closest = (a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2])
+    return _dist(p, closest)
 
 
 # -- shared context resolution (strictly through declared deps) -------------------------
