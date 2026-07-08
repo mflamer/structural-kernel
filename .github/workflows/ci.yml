@@ -21,20 +21,21 @@ jobs:
           uv run python - <<'PY'
           import importlib
           import pathlib
+          import sys
           import traceback
 
-          import xara
+          import opensees
 
-          print("=== xara __init__ source ===")
-          print(pathlib.Path(xara.__file__).read_text()[:4000])
-          print("=== internal imports ===")
-          for name in ("xara.model", "opensees.openseesrt", "opensees.OpenSeesPyRT"):
-              try:
-                  importlib.import_module(name)
-                  print(name, "-> ok")
-              except Exception:
-                  print(f"--- {name} failed ---")
-                  traceback.print_exc()
+          package_dir = pathlib.Path(opensees.__file__).parent
+          print("=== opensees contents ===")
+          print(sorted(p.name for p in package_dir.iterdir()))
+          print("=== import opensees.openseespy ===")
+          try:
+              importlib.import_module("opensees.openseespy")
+              print("ok")
+          except Exception:
+              traceback.print_exc()
+          sys.stdout.flush()
           PY
       - name: Lint
         run: uv run ruff check && uv run ruff format --check
