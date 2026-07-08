@@ -121,11 +121,27 @@ Push back when the engineering says otherwise.
   graph, the ADR 0005 eid scheme, and the two-site intent split are the accepted
   representation for phase 2 (the charter's halt gate is lifted). Approval covers
   the *structure*, not the flagged domain-value items below, which stay open. See
-  the closing note of `docs/kernel-internals.md`.
-- **Deferred (phase-2 continues, not started):** steel headers (openings don't
-  yet induce over steel), interior/multi-bay columns, true LTB with a real Lb,
-  HSS/A500 columns, LLM proposer, AI surface, lateral analysis, cost_basis
-  evaluation, concrete framing kind.
+  the closing note of `docs/kernel-internals.md`. Continuous bracing (Lb=0) for
+  steel confirmed correct-for-now by the PO (2026-07-08, ADR 0008).
+- **Phase-2 sprint 2 done (2026-07-08, PO-directed): ADR 0009 — the LLM
+  proposer.** A real LLM now drives exploration behind the existing `Proposer`
+  seam. `llm.py` is the provider-neutral `LLMClient` protocol (`invoke_tools`:
+  prompt + tool schemas → the tool calls the model chose) with a deterministic
+  `FakeLLMClient` (tests/CI) and, in `llm_anthropic.py`, the real
+  `AnthropicClient` (optional `llm` extra, model `claude-opus-4-8`,
+  `tool_choice=any`, SDK-isolated). `LLMProposer` prompts a propose_wood /
+  propose_steel tool pair and emits a single **heterogeneous slate** — the KIND
+  is chosen by which tool the model calls. Propose-only: the model's tool calls
+  become ordinary changeset proposals, malformed/intent-violating ones are
+  recorded rejections (never committed) — the charter's "AI never edits state
+  directly" holds by construction. Replay reads the recorded slate, never
+  re-calls the model; the model identity is on the `ProposerRef`. CI is
+  deterministic and secret-free (fake client only). All gates green.
+- **Deferred (phase-2 continues):** closed-loop LLM refinement (propose → see
+  results → propose better); conversational intent capture (the vision's
+  column-free-region → typed intent); steel headers (openings don't yet induce
+  over steel); interior/multi-bay columns; true LTB with a real Lb; HSS/A500
+  columns; lateral analysis; cost_basis evaluation; concrete framing kind.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =
