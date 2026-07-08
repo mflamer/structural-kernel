@@ -11,8 +11,9 @@ are scoped to this adapter boundary only (the rest of the kernel stays fully
 strict), and everything crossing back out is validated into our schemas.
 """
 
-# pyright: reportMissingImports=false, reportUnknownMemberType=false
-# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
+# pyright: reportUnknownArgumentType=false
 
 from __future__ import annotations
 
