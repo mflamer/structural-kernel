@@ -29,6 +29,7 @@ from structural_kernel.objects import (
     Changeset,
     Commit,
     Decision,
+    ModifyDecision,
     Override,
     OverrideProvenance,
     OverrideTarget,
@@ -106,8 +107,7 @@ def test_derivation_produces_members_analysis_artifact_and_bill(tmp_path: Path) 
     assert model.bill.lines and model.bill.countables.piece_count == len(model.elements)
 
     [header] = [e for e in model.elements if e.role == "header"]
-    [intent] = header.intent
-    assert intent.category == "gravity_load_path"
+    [intent] = [i for i in header.intent if i.category == "gravity_load_path"]
     assert intent.provenance.source == "derived"  # computed, not typed in
     assert any(r.role == "redirects_load_around" for r in intent.relations)
 
@@ -206,11 +206,43 @@ def test_surveyed_override_flows_through_with_provenance(tmp_path: Path) -> None
     assert abs(analysis_element.I_strong_m4 - b * d**3 / 12) < 1e-12
 
 
-@_increment("intent checkers + solve-time design checks")
-def test_intent_violating_changeset_is_rejected_with_structured_error() -> None:
+def test_intent_violating_changeset_is_rejected_with_structured_error(
+    tmp_path: Path,
+) -> None:
     """Deleting the header while the opening remains dies in validation with a
-    structured error citing the violated intent and the broken load path."""
-    raise NotImplementedError
+    structured error citing the violated intent and the broken load path.
+    (Earned in increment 6.)
+
+    The header is derived, so 'deleting it' means proposing the change that
+    makes it vanish: dropping the framing dep from the opening decision. The
+    opening remains; the header disappears; joists bear inside the hole."""
+    store = FileStore(tmp_path)
+    structure = _commit_milestone_structure(store)
+    opening = next(d for d in structure if d.kind == "opening")
+    framing = next(d for d in structure if d.kind == "gravity_framing_strategy")
+
+    orphaned = opening.model_copy(update={"deps": [d for d in opening.deps if d != framing.did]})
+    result = propose(
+        store,
+        Changeset(
+            base_commit=store.read_ref("main"),
+            ops=[ModifyDecision(decision=orphaned)],
+        ),
+        author=AUTHOR,
+        message="delete the header while the opening remains",
+        timestamp=T0,
+    )
+    assert result.outcome == "rejected"
+    [issue] = result.issues
+    assert issue.code == "intent_violation"
+    assert issue.severity == "error"
+    assert issue.detail["category"] == "gravity_load_path"  # the violated intent
+    assert issue.detail["violated"] == "redirects_load_around"
+    assert issue.detail["opening"] == opening.did
+    broken_path = issue.detail["broken_path"]
+    assert isinstance(broken_path, list)
+    assert any(str(part).startswith("jst:") for part in broken_path)  # the broken load path
+    assert store.read_ref("main") is not None  # tip unchanged; nothing half-applied
 
 
 @_increment("exploration loop")

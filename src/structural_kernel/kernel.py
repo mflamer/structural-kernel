@@ -19,6 +19,7 @@ from structural_kernel.derivation import (
     derive,
 )
 from structural_kernel.ids import ObjectHash
+from structural_kernel.intents import check_intent
 from structural_kernel.objects import (
     Author,
     Changeset,
@@ -63,8 +64,7 @@ def propose(
 ) -> ProposeResult:
     """Validate a changeset against the current tip of ``ref`` and commit it,
     or persist the rejection. Stages run fail-fast: schema, op application,
-    referential, derivation dry-run. (Intent checks are the remaining seam —
-    see validation module docstring.)"""
+    referential, derivation dry-run, intent checks — the full §6 pipeline."""
     current = store.read_ref(ref)
     if changeset.base_commit != current:
         return _reject(
@@ -126,6 +126,30 @@ def propose(
                     message=str(exc),
                     detail={},
                 )
+            ],
+        )
+
+    # Stage 4: intent checks — every registered checker over the dry-run
+    # derived model. The charter's "delete the header while the opening
+    # remains" case dies here with a machine-actionable error.
+    violations = check_intent(derived, result)
+    if violations:
+        return _reject(
+            store,
+            changeset,
+            [
+                ValidationIssue(
+                    code="intent_violation",
+                    severity="error",
+                    message=v.message,
+                    detail={
+                        "category": v.category,
+                        "carrier": v.carrier,
+                        "violated": v.violated,
+                        **v.detail,
+                    },
+                )
+                for v in violations
             ],
         )
 

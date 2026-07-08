@@ -14,8 +14,14 @@ from structural_kernel.derivation import (
     OverrideAttachment,
     derive,
 )
+from structural_kernel.design_checks import (
+    DesignCheck,
+    DesignCheckReport,
+    run_design_checks,
+)
 from structural_kernel.eids import render_eid
 from structural_kernel.ids import Did, LineId, ObjectHash, new_line_id, new_ulid
+from structural_kernel.intents import REGISTRY, IntentViolation, check_intent
 from structural_kernel.kernel import ProposeResult, propose
 from structural_kernel.objects import (
     Author,
@@ -45,6 +51,7 @@ __version__ = "0.0.1"
 
 __all__ = [
     "DERIVATION_VERSION",
+    "REGISTRY",
     "AnalysisModel",
     "Author",
     "Changeset",
@@ -55,6 +62,8 @@ __all__ = [
     "DecisionParams",
     "DerivationError",
     "DerivedModel",
+    "DesignCheck",
+    "DesignCheckReport",
     "Did",
     "Dimension",
     "DimensionError",
@@ -62,6 +71,7 @@ __all__ = [
     "EngineInfo",
     "FileStore",
     "IntentInstance",
+    "IntentViolation",
     "LineId",
     "LocalSolverService",
     "ObjectHash",
@@ -80,6 +90,7 @@ __all__ = [
     "XaraEngine",
     "__version__",
     "canonical_bytes",
+    "check_intent",
     "content_hash",
     "convert",
     "derive",
@@ -90,5 +101,6 @@ __all__ = [
     "parse_quantity",
     "propose",
     "render_eid",
+    "run_design_checks",
     "xara_available",
 ]

@@ -41,6 +41,7 @@ from structural_kernel.decisions import (
     parse_params,
 )
 from structural_kernel.eids import segment
+from structural_kernel.nds import grade_e_pa, section_properties
 from structural_kernel.objects import (
     Decision,
     DecisionKind,
@@ -58,7 +59,6 @@ from structural_kernel.objects import (
     OverrideTarget,
     SurveyedAnchor,
 )
-from structural_kernel.sections import grade_e_pa, sawn_section
 from structural_kernel.units import Quantity
 from structural_kernel.validation import ResolvedSnapshot
 
@@ -117,6 +117,7 @@ class Element(KernelModel):
     role: ElementRole
     family: str
     section: str
+    grade: str | None = None  # material grade (None for non-lumber, e.g. wall panels)
     start: Point
     end: Point
     length: Quantity
@@ -261,6 +262,7 @@ class _Member:
     start: tuple[float, float, float]
     end: tuple[float, float, float]
     tributary_m: float | None
+    grade: str | None = None
     supports: list[str] = field(default_factory=list[str])
     intent: list[IntentInstance] = field(default_factory=list[IntentInstance])
     line_load_by_case: dict[str, float] = field(default_factory=dict[str, float])
@@ -327,6 +329,7 @@ def derive(
             role=m.role,
             family=m.family,
             section=m.section,
+            grade=m.grade,
             start=Point(x=_length_m(m.start[0]), y=_length_m(m.start[1]), z=_length_m(m.start[2])),
             end=Point(x=_length_m(m.end[0]), y=_length_m(m.end[1]), z=_length_m(m.end[2])),
             length=_length_m(_dist(m.start, m.end)),
@@ -406,6 +409,15 @@ def _derive_framing(
             provenance=IntentProvenance(source="derived", inducer=decision.did),
         )
 
+    def serviceability_intent() -> IntentInstance:
+        # Review Q3: L/360 live and L/240 total are hard phase-1 limits; the
+        # solve-time deflection checks cite this instance (ADR 0004).
+        return IntentInstance(
+            category="serviceability",
+            payload={"live": "L/360", "total": "L/240"},
+            provenance=IntentProvenance(source="derived", inducer=decision.did),
+        )
+
     # ADR 0005 E2: the ordinal counting origin is the bounding line whose
     # line-id token sorts first — invariant under every geometric edit.
     origin_line = min(layout_lines)
@@ -437,10 +449,11 @@ def _derive_framing(
             role="joist",
             family=params.member_family,
             section=params.joist_section,
+            grade=params.member_grade,
             start=start,
             end=end,
             tributary_m=tributary,
-            intent=[gravity_intent()],
+            intent=[gravity_intent(), serviceability_intent()],
             line_load_by_case={case: q * tributary for case, q in loads.items()},
             flexural=True,
             e_pa=_grade_e(params, decision),
@@ -464,10 +477,11 @@ def _derive_framing(
             role="beam",
             family=params.member_family,
             section=params.beam_section,
+            grade=params.member_grade,
             start=start,
             end=end,
             tributary_m=span_m / 2.0,
-            intent=[gravity_intent()],
+            intent=[gravity_intent(), serviceability_intent()],
             line_load_by_case={case: q * span_m / 2.0 for case, q in loads.items()},
             flexural=True,
             e_pa=_grade_e(params, decision),
@@ -489,6 +503,7 @@ def _derive_framing(
                     role="post",
                     family=params.member_family,
                     section=params.post_section,
+                    grade=params.member_grade,
                     start=(xy[0], xy[1], 0.0),
                     end=(xy[0], xy[1], elevation_m),
                     tributary_m=None,
@@ -588,6 +603,7 @@ def _derive_opening(
         role="header",
         family=framing.params.member_family,
         section=framing.params.beam_section,
+        grade=framing.params.member_grade,
         start=start,
         end=end,
         tributary_m=tributary,
@@ -598,7 +614,12 @@ def _derive_opening(
                 payload={"redirects_around": decision.did},
                 relations=relations,
                 provenance=IntentProvenance(source="derived", inducer=decision.did),
-            )
+            ),
+            IntentInstance(
+                category="serviceability",
+                payload={"live": "L/360", "total": "L/240"},
+                provenance=IntentProvenance(source="derived", inducer=decision.did),
+            ),
         ],
         line_load_by_case={case: q * tributary for case, q in loads.items()},
         flexural=True,
@@ -885,7 +906,7 @@ def _analysis(members: list[_Member], provenance: DerivationProvenance) -> Analy
     cases: set[str] = set()
 
     for index, member in enumerate(flexural, start=1):
-        section = sawn_section(member.section)
+        section = section_properties(member.section)
         if section is None:
             raise DerivationError(
                 f"element {member.eid}: unknown section designation {member.section!r}"

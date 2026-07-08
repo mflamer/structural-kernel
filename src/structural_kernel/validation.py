@@ -45,6 +45,8 @@ IssueCode = Literal[
     "unknown_line_ref",
     "unknown_load_ref",
     "unknown_decision_ref",
+    "unknown_intent_category",
+    "intent_violation",
     "derivation_failure",
     "dangling_exception",
     "dangling_override",
@@ -87,7 +89,11 @@ def _error(code: IssueCode, message: str, **detail: JsonValue) -> ValidationIssu
 
 def check_schema(changeset: Changeset) -> list[ValidationIssue]:
     """Every decision payload validates against its kind's param schema, units
-    dimensionally correct (the envelope itself was validated at construction)."""
+    dimensionally correct (the envelope itself was validated at construction).
+    Authored intent validates against the category registry: registered
+    category, payload schema, declared relation roles (ADR 0004)."""
+    from structural_kernel.intents import REGISTRY
+
     issues: list[ValidationIssue] = []
     for op in changeset.ops:
         if not isinstance(op, AddDecision | ModifyDecision):
@@ -108,6 +114,44 @@ def check_schema(changeset: Changeset) -> list[ValidationIssue]:
                     ],
                 )
             )
+        for intent in op.decision.intent:
+            registration = REGISTRY.get(intent.category)
+            if registration is None:
+                issues.append(
+                    _error(
+                        "unknown_intent_category",
+                        f"decision {op.decision.did}: intent category "
+                        f"{intent.category!r} is not registered",
+                        did=op.decision.did,
+                        category=intent.category,
+                    )
+                )
+                continue
+            try:
+                registration.payload_model.model_validate(intent.payload)
+            except pydantic.ValidationError as exc:
+                issues.append(
+                    _error(
+                        "schema_invalid",
+                        f"decision {op.decision.did}: {intent.category} intent payload "
+                        "does not validate against the category schema",
+                        did=op.decision.did,
+                        category=intent.category,
+                        errors=[e["msg"] for e in exc.errors(include_url=False)],
+                    )
+                )
+            for relation in intent.relations:
+                if relation.role not in registration.relation_roles:
+                    issues.append(
+                        _error(
+                            "schema_invalid",
+                            f"decision {op.decision.did}: relation role {relation.role!r} "
+                            f"is not declared by category {intent.category!r}",
+                            did=op.decision.did,
+                            category=intent.category,
+                            role=relation.role,
+                        )
+                    )
     return issues
 
 

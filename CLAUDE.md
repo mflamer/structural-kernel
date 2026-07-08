@@ -65,10 +65,20 @@ Push back when the engineering says otherwise.
   adapter — a deliberate carve-out to the clean-slate clause for verified
   domain-calculation libraries. No ndswood type in persisted schemas; SI⇄lb-in
   conversion at the adapter; CI reads it via deploy key (NDSWOOD_DEPLOY_KEY).
-  Retires note 0003 item 1 (sections.py goes away with the design-check work).
-  Next: increment 6, intent checkers + solve-time design checks (NDS ASD unity +
-  L/360–L/240 deflection via ndswood, both citing intent per ADR 0004) — earns
-  acceptance test 5.
+  Retires note 0003 item 1 (sections.py deleted; ndswood is the sections/grade
+  source).
+- **Increment 6 done** (2026-07-08): the intent registry (`intents.py` — four
+  phase-1 categories as (name, payload schema, roles, checker) registrations;
+  adding `vibration` later = one registration) wired as validation stage 4, with
+  the opening-interruption checker realizing the charter's "delete the header
+  while the opening remains" rejection (structured error: category, broken load
+  path, opening did). Solve-time design checks (`design_checks.py` via `nds.py`,
+  the ADR 0006 adapter): NDS 2024 ASD bending/shear/post-compression + L/360–L/240
+  deflection, every check citing its NDS provision (ndswood factor trail) and the
+  intent instance it enforces; verification-grade results required. The §6
+  validation pipeline is complete. Milestone acceptance: **5 of 7**. Next:
+  increment 7, the exploration loop (grid-sweep + stub LLM proposer, evaluations
+  as a separate keyed layer, queries) — earns acceptance tests 6 and 7.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =

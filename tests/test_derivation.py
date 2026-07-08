@@ -244,7 +244,7 @@ def test_milestone_member_counts_spans_and_tributaries() -> None:
 def test_header_intent_and_load_path_rerouting() -> None:
     model, decisions = _milestone()
     [header] = [e for e in model.elements if e.role == "header"]
-    [intent] = header.intent
+    [intent] = [i for i in header.intent if i.category == "gravity_load_path"]
     assert intent.category == "gravity_load_path"
     assert intent.provenance.source == "derived"
     assert intent.provenance.inducer == decisions["opening"].did
