@@ -60,7 +60,9 @@ class XaraEngine:
             )
         import xara
 
-        self._xara = xara
+        # Typed as Any on purpose: the shipped stub is incomplete (no
+        # Model.__init__), and this module is already the untyped boundary.
+        self._xara: Any = xara
 
     @property
     def info(self) -> EngineInfo:
