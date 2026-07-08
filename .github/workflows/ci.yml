@@ -8,16 +8,20 @@ on:
 jobs:
   linux:
     # Python 3.13, not 3.14: the engine's native wheels top out at cp313
-    # (see the requires-python note in pyproject.toml).
+    # (see the requires-python note in pyproject.toml). The interpreter
+    # comes from actions/setup-python because uv's managed CPython bundles
+    # Tcl 9, and OpenSeesRT's extension is compiled for Tcl 8.x.
     name: Linux (xara engine)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        id: python
         with:
           python-version: "3.13"
+      - uses: astral-sh/setup-uv@v5
       - name: Install (with the xara engine)
-        run: uv sync --extra xara
+        run: uv sync --extra xara --python '${{ steps.python.outputs.python-path }}'
       - name: Probe xara availability
         run: |
           uv run python - <<'PY'
