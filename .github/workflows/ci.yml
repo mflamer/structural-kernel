@@ -16,6 +16,19 @@ jobs:
           python-version: "3.14"
       - name: Install (with the xara engine)
         run: uv sync --extra xara
+      - name: Probe xara availability
+        run: |
+          uv run python - <<'PY'
+          import traceback
+          try:
+              import xara
+              print("xara imported from:", xara.__file__)
+              print("xara.Model:", getattr(xara, "Model", None))
+              model = xara.Model(ndm=2, ndf=3)
+              print("xara.Model constructed OK:", model)
+          except Exception:
+              traceback.print_exc()
+          PY
       - name: Lint
         run: uv run ruff check && uv run ruff format --check
       - name: Typecheck
