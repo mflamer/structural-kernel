@@ -14,13 +14,28 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, assert_never
 
-from pydantic import Field, JsonValue, StringConstraints, model_validator
+from pydantic import AfterValidator, Field, JsonValue, StringConstraints, model_validator
 
 from structural_kernel.ids import LineId
+from structural_kernel.materials import families
 from structural_kernel.objects import Decision, Eid, KernelModel, SurveyedAnchor
 from structural_kernel.units import LengthQuantity, PressureQuantity
 
 Name = Annotated[str, StringConstraints(min_length=1)]
+
+
+def _registered_family(value: str) -> str:
+    if value not in families():
+        raise ValueError(
+            f"material family {value!r} has no registered design-check engine; "
+            f"registered: {sorted(families())}"
+        )
+    return value
+
+
+# A catalog material family with a registered engine (ADR 0007). Open by
+# design — the set grows as engines register, without a schema edit.
+MaterialFamily = Annotated[str, StringConstraints(min_length=1), AfterValidator(_registered_family)]
 
 
 # -- grid ----------------------------------------------------------------------
@@ -106,10 +121,14 @@ class GravityFramingStrategyParams(KernelModel):
     system: Literal["joists_on_beams_on_posts"]
     joist_axis: Literal["x", "y"]  # the axis joists span along
     joist_spacing: LengthQuantity
-    member_family: Literal["sawn_lumber"]  # review Q1: phase 1 is sawn lumber
-    # Reference stiffness/strength come from this grade via the sections table;
+    # Which material engine designs these members (ADR 0007 registry key).
+    # Phase-1 framing is sawn lumber (review Q1); the field is validated against
+    # the registered catalog engines so a steel framing rule needs no schema
+    # change here, only its own decision kind.
+    member_family: MaterialFamily
+    # Reference stiffness/strength come from this grade via the material engine;
     # the *choice* of grade is this decision's to make, never a code constant.
-    member_grade: Literal["DF-L No.2"]
+    member_grade: Name
     # Review Q4: sizes are decision parameters; explorations vary them.
     joist_section: Name
     beam_section: Name

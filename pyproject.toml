@@ -9,13 +9,19 @@ requires-python = ">=3.13"
 license = "LicenseRef-Proprietary"
 dependencies = [
     "pydantic>=2.11",
-    # NDS 2024 calculation engine behind the design-check adapter (ADR 0006).
-    # Private repo; CI authenticates with a read-only deploy key.
-    "ndswood",
+    # Verified code-calculation engines behind the material design-check
+    # adapters (ADR 0006 wood; ADR 0007 the multi-material generalization).
+    # All pure-Python, zero-dependency, install on every platform; private
+    # repos, CI authenticates with per-repo read-only deploy keys.
+    "ndswood",     # NDS 2024 wood
+    "aiscsteel",   # AISC 360-22 steel
+    "aciconcrete",  # ACI 318-19 concrete
 ]
 
 [tool.uv.sources]
 ndswood = { git = "https://github.com/mflamer/ndswood" }
+aiscsteel = { git = "https://github.com/mflamer/aiscsteel" }
+aciconcrete = { git = "https://github.com/mflamer/aciconcrete" }
 
 [project.optional-dependencies]
 # The blessed engine (ADR 0003). Native wheels exist for Linux/macOS on

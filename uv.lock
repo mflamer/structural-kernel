@@ -13,6 +13,16 @@ supported-markers = [
 ]
 
 [[package]]
+name = "aciconcrete"
+version = "0.1.0"
+source = { git = "https://github.com/mflamer/aciconcrete#b7dffb6123eec9fe90c3f184a1e037d3914d55bf" }
+
+[[package]]
+name = "aiscsteel"
+version = "0.1.0"
+source = { git = "https://github.com/mflamer/aiscsteel#e0c54c0d25ea40e5672de8a96a8ad185524dc1c7" }
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -875,6 +885,8 @@ name = "structural-kernel"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "aciconcrete" },
+    { name = "aiscsteel" },
     { name = "ndswood" },
     { name = "pydantic" },
 ]
@@ -895,6 +907,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aciconcrete", git = "https://github.com/mflamer/aciconcrete" },
+    { name = "aiscsteel", git = "https://github.com/mflamer/aiscsteel" },
     { name = "ndswood", git = "https://github.com/mflamer/ndswood" },
     { name = "opensees", marker = "python_full_version < '3.14' and sys_platform == 'linux' and extra == 'xara'", specifier = ">=0.1.27" },
     { name = "pydantic", specifier = ">=2.11" },

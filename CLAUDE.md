@@ -86,9 +86,25 @@ Push back when the engineering says otherwise.
   grid-sweep + stub LLM proposers behind one protocol. `queries.py`: what_carries /
   why / header_for_opening / best_variant. Mass metric uses ndswood G with a
   documented 0.5 fallback (noted in evaluations).
+- **Multi-material engine preparation done (2026-07-08, PO-directed): ADR 0007.**
+  The ndswood boundary is generalized to a `materials/` engine registry keyed by
+  `member_family`. `MemberCheckData` now carries demand/capacity as tagged SI with
+  a *dimension* (stress for wood, moment/force for steel/concrete). Registered
+  catalog engines: `WoodEngine` (sawn_lumber, ndswood) and a real, unit-tested
+  `SteelEngine` (hot_rolled_steel, aiscsteel). Concrete (`materials/concrete.py`)
+  proves the vocabulary spans the dimensional+reinforced case but is *not* a
+  catalog engine — it registers when the phase-2 concrete framing decision kind
+  exists. `loads.py` is the ASCE 7 combo-set seam (built-in phase-1 set; the ASCE 7
+  library plugs in there — repo not found as of this work). aiscsteel/aciconcrete
+  are core git deps (pure-python, install everywhere); CI reads all three private
+  libs via per-repo deploy keys (`.github/deploy-keys.sh`). All 129 tests green.
+  **This is preparation only** — no steel/concrete *framing decision kind* exists
+  yet; wiring steel into derivation + heterogeneous exploration remains the
+  representation-gated phase-2 lift.
 - **Per the charter: STOP. Phase 1 halts here for the PO's representation review
   before any scope is added.** Do not start phase-2 work (LLM proposer, AI surface,
-  lateral analysis, cost_basis evaluation) without that review.
+  lateral analysis, cost_basis evaluation, material framing decision kinds) without
+  that review.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =

@@ -29,7 +29,7 @@ from structural_kernel.derivation import DerivedModel, derive
 from structural_kernel.design_checks import run_design_checks
 from structural_kernel.ids import Did, ObjectHash, new_ulid
 from structural_kernel.kernel import load_snapshot, propose
-from structural_kernel.nds import grade_specific_gravity, section_properties
+from structural_kernel.materials import engine_for
 from structural_kernel.objects import (
     Author,
     Changeset,
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from structural_kernel.store import FileStore
     from structural_kernel.units import Quantity
 
-_FALLBACK_SPECIFIC_GRAVITY = 0.5  # used only when the grade table lacks G; noted
+_FALLBACK_DENSITY_KG_M3 = 500.0  # used only when the grade lacks a density; noted
 
 
 # -- persisted schema -----------------------------------------------------------------
@@ -417,17 +417,20 @@ def _total_member_mass_kg(model: DerivedModel) -> tuple[float, str]:
     total = 0.0
     note = ""
     for element in model.elements:
-        section = section_properties(element.section)
-        if section is None or element.grade is None:
+        if element.grade is None:
             continue
-        specific_gravity = grade_specific_gravity(element.grade)
-        if specific_gravity is None:
-            specific_gravity = _FALLBACK_SPECIFIC_GRAVITY
+        engine = engine_for(element.family)
+        section = engine.section_properties(element.section)
+        if section is None:
+            continue
+        density = engine.mass_density_kg_m3(element.grade)
+        if density is None:
+            density = _FALLBACK_DENSITY_KG_M3
             note = (
-                f"specific gravity for {element.grade!r} not tabulated; "
-                f"mass uses G={_FALLBACK_SPECIFIC_GRAVITY}"
+                f"mass density for {element.family}/{element.grade!r} not tabulated; "
+                f"mass uses {_FALLBACK_DENSITY_KG_M3:g} kg/m³"
             )
-        total += section.area_m2 * element.length.si_mag * specific_gravity * 1000.0
+        total += section.area_m2 * element.length.si_mag * density
     return total, note
 
 

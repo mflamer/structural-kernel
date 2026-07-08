@@ -19,17 +19,19 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
-from structural_kernel.nds import check_flexural_member, check_post, combo_duration
+from structural_kernel.materials import AxialRequest, FlexureRequest, engine_for
 from structural_kernel.objects import Eid, KernelModel
 from structural_kernel.solver import EngineInfo, MemberForces, SolveResult
-from structural_kernel.units import Quantity
+from structural_kernel.units import CANONICAL_SI, Quantity
 
 if TYPE_CHECKING:
     from structural_kernel.derivation import DerivedModel, Element
 
 _EPS = 1e-6
 
-CheckKind = Literal["bending", "shear", "compression", "deflection_live", "deflection_total"]
+CheckKind = Literal[
+    "bending", "shear", "compression", "tension", "deflection_live", "deflection_total"
+]
 
 _DEFLECTION_PROVISION = "IBC Table 1604.3 (L/360 live, L/240 total)"
 _LIVE_DENOMINATOR = 360.0
@@ -93,15 +95,14 @@ def run_design_checks(model: DerivedModel, result: SolveResult) -> DesignCheckRe
     checks: list[DesignCheck] = []
 
     for combo_result in result.combos:
-        cases = combo_cases.get(combo_result.combo, set())
-        duration = combo_duration(cases)
+        cases = frozenset(combo_cases.get(combo_result.combo, set()))
         forces_by_eid = {m.source_eid: m for m in combo_result.members}
         for element in model.elements:
             if element.grade is None:
                 continue
             forces = forces_by_eid.get(element.eid)
             if forces is not None:
-                checks += _strength_checks(element, combo_result.combo, duration, forces)
+                checks += _strength_checks(element, combo_result.combo, cases, forces)
 
     checks += _deflection_checks(model, result)
     checks += _post_checks(model, result, combo_cases)
@@ -119,35 +120,43 @@ def run_design_checks(model: DerivedModel, result: SolveResult) -> DesignCheckRe
 
 
 def _strength_checks(
-    element: Element, combo: str, duration: str, forces: MemberForces
+    element: Element, combo: str, cases: frozenset[str], forces: MemberForces
 ) -> list[DesignCheck]:
     assert element.grade is not None
-    results = check_flexural_member(
-        section=element.section,
-        grade=element.grade,
-        repetitive=element.role == "joist",
-        duration=duration,
-        moment_nm=forces.max_abs_moment_nm,
-        shear_n=forces.max_abs_shear_n,
-    )
-    return [
-        DesignCheck(
-            eid=element.eid,
-            combo=combo,
-            check=data.check,
-            demand=Quantity(mag=data.demand_pa, unit="Pa"),
-            capacity=Quantity(mag=data.capacity_pa, unit="Pa"),
-            unity=data.unity,
-            passes=data.passes,
-            provision=data.provision,
-            factors=[
-                ProvisionFactor(symbol=f.symbol, value=f.value, ref=f.ref, note=f.note)
-                for f in data.factors
-            ],
-            enforces=_intent_ref(element, "gravity_load_path"),
+    results = engine_for(element.family).check_flexure(
+        FlexureRequest(
+            designation=element.section,
+            grade=element.grade,
+            moment_nm=forces.max_abs_moment_nm,
+            shear_n=forces.max_abs_shear_n,
+            span_m=element.length.si_mag,
+            load_cases=cases,
+            repetitive=element.role == "joist",
         )
-        for data in results
-    ]
+    )
+    return [_design_check(element, combo, data, "gravity_load_path") for data in results]
+
+
+def _design_check(element: Element, combo: str, data: object, category: str) -> DesignCheck:
+    from structural_kernel.materials import MemberCheckData
+
+    assert isinstance(data, MemberCheckData)
+    unit = CANONICAL_SI[data.dimension]
+    return DesignCheck(
+        eid=element.eid,
+        combo=combo,
+        check=data.check,  # type: ignore[arg-type]
+        demand=Quantity(mag=data.demand, unit=unit),
+        capacity=Quantity(mag=data.capacity, unit=unit),
+        unity=data.unity,
+        passes=data.passes,
+        provision=data.provision,
+        factors=[
+            ProvisionFactor(symbol=f.symbol, value=f.value, ref=f.ref, note=f.note)
+            for f in data.factors
+        ],
+        enforces=_intent_ref(element, category),
+    )
 
 
 def _deflection_checks(model: DerivedModel, result: SolveResult) -> list[DesignCheck]:
@@ -229,31 +238,17 @@ def _post_checks(
             axial = abs(axial)
             if axial < _EPS:
                 continue
-            duration = combo_duration(combo_cases.get(combo_result.combo, set()))
-            data = check_post(
-                section=element.section,
-                grade=element.grade,
-                duration=duration,
-                axial_n=axial,
-                unbraced_length_m=length,
-            )
-            checks.append(
-                DesignCheck(
-                    eid=element.eid,
-                    combo=combo_result.combo,
-                    check="compression",
-                    demand=Quantity(mag=data.demand_pa, unit="Pa"),
-                    capacity=Quantity(mag=data.capacity_pa, unit="Pa"),
-                    unity=data.unity,
-                    passes=data.passes,
-                    provision=data.provision,
-                    factors=[
-                        ProvisionFactor(symbol=f.symbol, value=f.value, ref=f.ref, note=f.note)
-                        for f in data.factors
-                    ],
-                    enforces=_intent_ref(element, "gravity_load_path"),
+            data = engine_for(element.family).check_axial(
+                AxialRequest(
+                    designation=element.section,
+                    grade=element.grade,
+                    force_n=axial,
+                    sense="compression",
+                    unbraced_length_m=length,
+                    load_cases=frozenset(combo_cases.get(combo_result.combo, set())),
                 )
             )
+            checks.append(_design_check(element, combo_result.combo, data, "gravity_load_path"))
     return checks
 
 

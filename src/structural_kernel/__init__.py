@@ -33,6 +33,13 @@ from structural_kernel.explorations import (
 from structural_kernel.ids import Did, LineId, ObjectHash, new_line_id, new_ulid
 from structural_kernel.intents import REGISTRY, IntentViolation, check_intent
 from structural_kernel.kernel import ProposeResult, load_snapshot, propose
+from structural_kernel.materials import (
+    ENGINES,
+    MaterialEngine,
+    MemberCheckData,
+    engine_for,
+    families,
+)
 from structural_kernel.objects import (
     Author,
     Changeset,
@@ -62,6 +69,7 @@ __version__ = "0.0.1"
 
 __all__ = [
     "DERIVATION_VERSION",
+    "ENGINES",
     "REGISTRY",
     "AnalysisModel",
     "Author",
@@ -88,6 +96,8 @@ __all__ = [
     "IntentViolation",
     "LineId",
     "LocalSolverService",
+    "MaterialEngine",
+    "MemberCheckData",
     "ObjectHash",
     "Objective",
     "Override",
@@ -112,7 +122,9 @@ __all__ = [
     "content_hash",
     "convert",
     "derive",
+    "engine_for",
     "evaluate",
+    "families",
     "header_for_opening",
     "load_snapshot",
     "model_document",

@@ -41,7 +41,8 @@ from structural_kernel.decisions import (
     parse_params,
 )
 from structural_kernel.eids import segment
-from structural_kernel.nds import grade_e_pa, section_properties
+from structural_kernel.loads import combos_for
+from structural_kernel.materials import engine_for
 from structural_kernel.objects import (
     Decision,
     DecisionKind,
@@ -351,7 +352,7 @@ def derive(
         load_path=load_path,
         open_decisions=open_refs,
         bill=_bill(elements, load_path),
-        analysis=_analysis(ordered, provenance),
+        analysis=_analysis(ordered, provenance, _combo_set(resolved)),
         override_attachments=override_attachments,
     )
 
@@ -852,10 +853,12 @@ def _area_loads_in_deps(decision: Decision, decisions: dict[str, Decision]) -> d
 
 
 def _grade_e(params: GravityFramingStrategyParams, decision: Decision) -> float:
-    e_pa = grade_e_pa(params.member_grade)
+    engine = engine_for(params.member_family)
+    e_pa = engine.elastic_modulus_pa(params.member_grade)
     if e_pa is None:
         raise DerivationError(
-            f"framing {decision.did}: grade {params.member_grade!r} has no reference values"
+            f"framing {decision.did}: {engine.family} grade {params.member_grade!r} "
+            "has no reference modulus"
         )
     return e_pa
 
@@ -894,7 +897,20 @@ def _bill(elements: list[Element], load_path: list[LoadPathEdge]) -> BillOfEleme
 # -- analysis artifact (§7.1) ---------------------------------------------------------
 
 
-def _analysis(members: list[_Member], provenance: DerivationProvenance) -> AnalysisModel | None:
+def _combo_set(resolved: list[Decision]) -> str:
+    """The combination set the load assumptions select (ADR 0007 / loads.py).
+    Phase 1 has one load_assumptions decision; default if none is present."""
+    for decision in resolved:
+        if decision.kind == "load_assumptions":
+            params = parse_params(decision)
+            if isinstance(params, LoadAssumptionsParams):
+                return params.combo_set
+    return "ASCE7-22-2.4-ASD"
+
+
+def _analysis(
+    members: list[_Member], provenance: DerivationProvenance, combo_set: str
+) -> AnalysisModel | None:
     flexural = [m for m in members if m.flexural]
     if not flexural:
         return None  # a valid state, not a failure (partial models)
@@ -906,7 +922,7 @@ def _analysis(members: list[_Member], provenance: DerivationProvenance) -> Analy
     cases: set[str] = set()
 
     for index, member in enumerate(flexural, start=1):
-        section = section_properties(member.section)
+        section = engine_for(member.family).section_properties(member.section)
         if section is None:
             raise DerivationError(
                 f"element {member.eid}: unknown section designation {member.section!r}"
@@ -947,20 +963,7 @@ def _analysis(members: list[_Member], provenance: DerivationProvenance) -> Analy
         elements=elements,
         supports=supports,
         loads=loads,
-        combos=_asd_combos(cases),
+        combos=[
+            Combo(name=c.name, factors=c.factors) for c in combos_for(combo_set, frozenset(cases))
+        ],
     )
-
-
-def _asd_combos(cases: set[str]) -> list[Combo]:
-    """The gravity slice of ASCE 7-22 §2.4 ASD combos (review Q2), limited to
-    the cases the snapshot actually defines."""
-    combos: list[Combo] = []
-    if "D" in cases:
-        combos.append(Combo(name="D", factors={"D": 1.0}))
-    if {"D", "L"} <= cases:
-        combos.append(Combo(name="D+L", factors={"D": 1.0, "L": 1.0}))
-    if {"D", "S"} <= cases:
-        combos.append(Combo(name="D+S", factors={"D": 1.0, "S": 1.0}))
-    if {"D", "L", "S"} <= cases:
-        combos.append(Combo(name="D+0.75L+0.75S", factors={"D": 1.0, "L": 0.75, "S": 0.75}))
-    return combos
