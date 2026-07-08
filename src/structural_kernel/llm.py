@@ -76,3 +76,25 @@ class FakeLLMClient:
     ) -> list[ToolInvocation]:
         self.calls.append((system, user, tuple(t.name for t in tools)))
         return list(self.invocations)
+
+
+@dataclass
+class ScriptedLLMClient:
+    """Returns a scripted sequence of slates — one per invoke call, the last slate
+    repeating once the script runs out. Drives multi-generation closed-loop tests
+    deterministically; an empty final slate ends the search. Records the prompts
+    it was asked, so a test can assert the refinement prompt carried the prior
+    round's results."""
+
+    slates: list[list[ToolInvocation]]
+    descriptor: str = "scripted-llm"
+    calls: list[tuple[str, str, tuple[str, ...]]] = field(
+        default_factory=list[tuple[str, str, tuple[str, ...]]]
+    )
+
+    def invoke_tools(
+        self, *, system: str, user: str, tools: list[ToolSpec]
+    ) -> list[ToolInvocation]:
+        index = min(len(self.calls), len(self.slates) - 1)
+        self.calls.append((system, user, tuple(t.name for t in tools)))
+        return list(self.slates[index])

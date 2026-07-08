@@ -30,6 +30,7 @@ from structural_kernel.decisions import (
     GridRegion,
     LevelsParams,
     LoadAssumptionsParams,
+    SteelFramingStrategyParams,
     parse_params,
 )
 from structural_kernel.derivation import DerivedModel, derive
@@ -373,28 +374,49 @@ class LLMProposer:
     candidate systems — of different decision kinds — each with a rationale. The
     model only *proposes*; the malformed and the intent-violating are recorded as
     rejections by the ordinary pipeline, never committed (the charter's "AI never
-    edits state directly"). One slate is one generation; then it converges.
+    edits state directly").
+
+    Two modes. In the default single-slate mode one slate is one generation, then
+    it converges. In ``refine`` mode (ADR 0010, closed-loop) it keeps proposing:
+    each generation after the first, the prior round's results — which candidates
+    were feasible, their mass and governing unity, why the rejected ones were
+    rejected, and the best feasible design so far — are fed back into the prompt,
+    and the model proposes an improved slate. The loop ends when the model
+    proposes nothing, or the kernel's convergence / budget stops it.
 
     Determinism/replay: the emitted proposals are recorded in the exploration, so
     replay reads the record — it never re-calls the model."""
 
-    def __init__(self, client: LLMClient, *, region: GridRegion) -> None:
+    def __init__(self, client: LLMClient, *, region: GridRegion, refine: bool = False) -> None:
         self._client = client
         self._region = region
+        self._refine = refine
 
     @property
     def ref(self) -> ProposerRef:
-        return ProposerRef(strategy="llm", params={"client": self._client.descriptor}, version=1)
+        return ProposerRef(
+            strategy="llm",
+            params={
+                "client": self._client.descriptor,
+                "mode": "refine" if self._refine else "slate",
+            },
+            version=1,
+        )
 
     def propose(self, exploration: Exploration, store: FileStore) -> list[Proposal]:
-        if exploration.generations:
-            return []
+        if exploration.generations and not self._refine:
+            return []  # single-slate mode: one generation, then converge
         snapshot = load_snapshot(store, exploration.base_commit)
         grid = _single_decision(snapshot, "grid")
         levels = _single_decision(snapshot, "levels")
         loads = _single_decision(snapshot, "load_assumptions")
         deps = [grid.did, levels.did, loads.did]
-        user = _llm_user_prompt(grid, levels, loads, self._region)
+        if exploration.generations:  # refine mode, a later generation: feed results back
+            user = _llm_refine_prompt(
+                grid, levels, loads, self._region, _feedback_summary(exploration, store)
+            )
+        else:
+            user = _llm_user_prompt(grid, levels, loads, self._region)
         invocations = self._client.invoke_tools(
             system=_LLM_SYSTEM_PROMPT, user=user, tools=[_WOOD_TOOL, _STEEL_TOOL]
         )
@@ -503,6 +525,90 @@ def _llm_user_prompt(grid: Decision, levels: Decision, loads: Decision, region: 
         "like 'W8x10', 'W10x12', 'W12x16', 'W8x24', 'W18x50').\n"
         "Propose 2 to 4 candidate systems spanning wood and steel."
     )
+
+
+def _llm_refine_prompt(
+    grid: Decision, levels: Decision, loads: Decision, region: GridRegion, feedback: str
+) -> str:
+    """The refinement-round prompt (ADR 0010): the base bay plus the prior round's
+    results and instructions to improve on them."""
+    return (
+        _llm_user_prompt(grid, levels, loads, region)
+        + "\n\nThis is a refinement round.\n"
+        + feedback
+        + "\nPropose an improved slate: make any INFEASIBLE candidate work by increasing "
+        "the size of the governing members (a failing bending or deflection check wants a "
+        "deeper section; a failing compression check wants a larger column), and lighten a "
+        "FEASIBLE candidate that has unity margin by choosing a smaller section. Keep "
+        "spanning wood and steel. If you judge the best feasible design cannot be improved, "
+        "propose no candidates to end the search."
+    )
+
+
+def _feedback_summary(exploration: Exploration, store: FileStore) -> str:
+    """Summarize the latest generation's candidates (kind, sizes, feasibility, mass,
+    governing unity, or rejection reason) plus the best feasible design so far — the
+    results the model refines against."""
+    from structural_kernel.validation import ValidationReport
+
+    generation = exploration.generations[-1]
+    evaluation = exploration.evaluations[-1] if exploration.evaluations else None
+    lines: list[str] = []
+    for candidate in generation.candidates:
+        if candidate.committed and candidate.commit is not None:
+            snapshot = load_snapshot(store, candidate.commit)
+            framing = next(
+                (d for d in snapshot.decisions.values() if d.kind.endswith("framing_strategy")),
+                None,
+            )
+            desc = _describe_framing(framing) if framing is not None else "a framing scheme"
+            per = evaluation.per_candidate.get(candidate.key) if evaluation is not None else None
+            if per is None:
+                lines.append(f"- {desc}: committed but not solved (over budget).")
+                continue
+            verdict = "FEASIBLE" if per.feasible else "INFEASIBLE"
+            mass = per.metrics.get("total_member_mass_kg", 0.0)
+            unity = per.metrics.get("max_unity", 0.0)
+            lines.append(f"- {desc}: {verdict}, mass {mass:.0f} kg, worst unity {unity:.2f}.")
+        else:
+            report = store.get_model(candidate.report, ValidationReport)
+            reason = report.issues[0].message if report.issues else "rejected in validation"
+            lines.append(f"- a rejected proposal ({reason}).")
+
+    best = _best_feasible_mass(exploration)
+    header = (
+        f"Best feasible design so far: {best:.0f} kg.\n"
+        if best is not None
+        else "No feasible design yet.\n"
+    )
+    return header + "Your last round of candidates:\n" + "\n".join(lines)
+
+
+def _describe_framing(decision: Decision) -> str:
+    params = parse_params(decision)
+    if isinstance(params, GravityFramingStrategyParams):
+        s = params.joist_spacing
+        return (
+            f"wood ({params.joist_section} joists at {s.mag:g} {s.unit}, {params.beam_section} "
+            f"beams, {params.post_section} posts, {params.member_grade})"
+        )
+    if isinstance(params, SteelFramingStrategyParams):
+        s = params.beam_spacing
+        return (
+            f"steel ({params.beam_section} beams at {s.mag:g} {s.unit}, {params.girder_section} "
+            f"girders, {params.column_section} columns, {params.member_grade})"
+        )
+    return "a framing scheme"
+
+
+def _best_feasible_mass(exploration: Exploration) -> float | None:
+    best: float | None = None
+    for evaluation in exploration.evaluations:
+        for per in evaluation.per_candidate.values():
+            if per.feasible and "total_member_mass_kg" in per.metrics:
+                mass = per.metrics["total_member_mass_kg"]
+                best = mass if best is None else min(best, mass)
+    return best
 
 
 def _the_framing_decision(exploration: Exploration, store: FileStore) -> Decision:

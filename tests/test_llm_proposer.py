@@ -26,6 +26,8 @@ from conftest import (
 from reference_solver import ReferenceEngine
 from structural_kernel.decisions import GridRegion
 from structural_kernel.explorations import (
+    Convergence,
+    Evaluation,
     Exploration,
     ExplorationBudget,
     IntentPreservedConstraint,
@@ -35,7 +37,7 @@ from structural_kernel.explorations import (
     run_exploration,
 )
 from structural_kernel.kernel import load_snapshot, propose
-from structural_kernel.llm import FakeLLMClient, ToolInvocation
+from structural_kernel.llm import FakeLLMClient, LLMClient, ScriptedLLMClient, ToolInvocation
 from structural_kernel.objects import AddDecision, Changeset
 from structural_kernel.queries import best_variant
 from structural_kernel.store import FileStore
@@ -91,7 +93,7 @@ def _commit_base(store: FileStore) -> str:
     return tip
 
 
-def _run(store: FileStore, client: FakeLLMClient) -> Exploration:
+def _run(store: FileStore, client: LLMClient) -> Exploration:
     return run_exploration(
         store,
         base_commit=_commit_base(store),
@@ -177,3 +179,73 @@ def test_the_prompt_describes_the_bay_and_both_materials(tmp_path: Path) -> None
     assert "A992" in user and "W-shapes" in user
     assert set(tool_names) == {"propose_wood_framing", "propose_steel_framing"}
     assert "NDS" in system and "AISC" in system
+
+
+# -- closed-loop refinement (ADR 0010) ---------------------------------------------------
+
+# A trajectory the scripted model walks: a dense-but-feasible wood scheme and an
+# undersized (infeasible) one, then a lighter feasible wood scheme plus steel,
+# then nothing (satisfied — end the search).
+WOOD_HEAVY = ToolInvocation(
+    name="propose_wood_framing",
+    input={**WOOD_CALL.input, "rationale": "Dense joists to be safe.", "joist_spacing_in": 12},
+)
+WOOD_UNDERSIZED = ToolInvocation(
+    name="propose_wood_framing",
+    input={**WOOD_CALL.input, "rationale": "Try a small beam.", "beam_section": "4x4"},
+)
+WOOD_LIGHT = ToolInvocation(
+    name="propose_wood_framing",
+    input={
+        **WOOD_CALL.input,
+        "rationale": "Wider spacing and a lighter beam now that I know 4x12 has margin.",
+        "joist_spacing_in": 24,
+        "beam_section": "4x10",
+    },
+)
+
+
+def _best_feasible_mass(evaluation: Evaluation) -> float:
+    per = evaluation.per_candidate
+    return min(e.metrics["total_member_mass_kg"] for e in per.values() if e.feasible)
+
+
+def test_closed_loop_refinement_improves_and_converges(tmp_path: Path) -> None:
+    store = FileStore(tmp_path)
+    client = ScriptedLLMClient([[WOOD_HEAVY, WOOD_UNDERSIZED], [WOOD_LIGHT, STEEL_CALL], []])
+    exploration = run_exploration(
+        store,
+        base_commit=_commit_base(store),
+        objectives=OBJECTIVES,
+        constraints=CONSTRAINTS,
+        proposer=LLMProposer(client, region=REGION, refine=True),
+        budget=ExplorationBudget(max_solves=20, max_generations=6),
+        convergence=Convergence(no_improvement_generations=5),
+        engine=ReferenceEngine(),
+        timestamp=T0,
+    )
+    assert exploration.proposer.params["mode"] == "refine"
+    # two rounds proposed candidates; the empty third slate ended the search
+    assert len(exploration.generations) == 2
+    assert exploration.status == "converged"
+
+    # the loop found a lighter feasible design in the refinement round
+    assert _best_feasible_mass(exploration.evaluations[-1]) < _best_feasible_mass(
+        exploration.evaluations[0]
+    )
+
+    # the refinement round's prompt fed the prior results back to the model
+    refine_prompt = client.calls[1][1]
+    assert "refinement round" in refine_prompt
+    assert "Best feasible design so far" in refine_prompt
+    assert "INFEASIBLE" in refine_prompt  # the undersized-beam candidate failed
+
+
+def test_single_slate_mode_ignores_later_slates(tmp_path: Path) -> None:
+    store = FileStore(tmp_path)
+    client = ScriptedLLMClient([[WOOD_CALL], [STEEL_CALL]])  # refine defaults off in _run
+    exploration = _run(store, client)
+    assert exploration.proposer.params["mode"] == "slate"
+    [generation] = exploration.generations  # only the first slate ran
+    assert len(generation.candidates) == 1
+    assert len(client.calls) == 1  # the model was consulted exactly once
