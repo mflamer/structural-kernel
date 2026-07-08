@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux:
+    name: Linux (xara engine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+      - name: Install (with the xara engine)
+        run: uv sync --extra xara
+      - name: Lint
+        run: uv run ruff check && uv run ruff format --check
+      - name: Typecheck
+        run: uv run pyright
+      - name: Test (verification suite runs through xara here)
+        run: uv run pytest -v
+
+  windows:
+    name: Windows (reference engine only)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+      - name: Install
+        run: uv sync
+      - name: Test
+        run: uv run pytest

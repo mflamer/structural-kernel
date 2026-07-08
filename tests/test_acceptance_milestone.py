@@ -24,7 +24,9 @@ from conftest import (
 from structural_kernel.derivation import derive
 from structural_kernel.kernel import load_snapshot, propose
 from structural_kernel.objects import AddDecision, Changeset, Commit, Decision, Snapshot
+from structural_kernel.solver import LocalSolverService
 from structural_kernel.store import FileStore
+from structural_kernel.xara_adapter import XaraEngine, xara_available
 
 
 def _increment(name: str) -> pytest.MarkDecorator:
@@ -100,17 +102,43 @@ def test_derivation_produces_members_analysis_artifact_and_bill(tmp_path: Path) 
     assert any(r.role == "redirects_load_around" for r in intent.relations)
 
 
-@_increment(
-    "xara engine on a platform with native binaries (Linux CI/container; "
-    "no Windows wheels as of 2026-07). The service, adapter, fixtures, and "
-    "direct-stiffness cross-check all exist and pass — see "
-    "test_solver_verification.py — but ADR 0003 reserves this criterion for "
-    "the blessed engine."
+@pytest.mark.skipif(
+    not xara_available(),
+    reason="ADR 0003 reserves this criterion for the blessed engine, and xara "
+    "ships no Windows binaries — this test runs for real on Linux CI",
 )
-def test_solver_results_verify_against_hand_calcs() -> None:
+def test_solver_results_verify_against_hand_calcs(tmp_path: Path) -> None:
     """The solver service (local, cloud-shaped interface) solves the artifact;
-    results match hand calculations within the stated tolerances."""
-    raise NotImplementedError
+    results match hand calculations within the stated tolerances.
+    (Earned in increment 4, on platforms where xara's native runtime exists.)"""
+    store = FileStore(tmp_path)
+    _commit_milestone_structure(store)
+    tip = store.read_ref("main")
+    assert tip is not None
+    commit = store.get_model(tip, Commit)
+    model = derive(load_snapshot(store, tip), snapshot_hash=commit.snapshot)
+    assert model.analysis is not None
+
+    service = LocalSolverService(XaraEngine())
+    [result] = service.results(service.submit([model.analysis]))
+    assert result.status == "solved", result.failure
+    assert result.engine.name == "xara"
+    assert result.engine.fidelity == "verification"
+
+    [combo] = [c for c in result.combos if c.combo == "D+L"]
+    interior = next(e for e in model.elements if e.role == "joist" and e.eid.endswith("+001"))
+    member = next(m for m in combo.members if m.source_eid == interior.eid)
+
+    psf = 4.4482216152605 / 0.3048**2
+    w = (15.0 + 40.0) * psf * interior.tributary_width.si_mag  # type: ignore[union-attr]
+    span = interior.length.si_mag
+    e_pa = 1.6e6 * (4.4482216152605 / 0.0254**2)
+    b, d = 1.5 * 0.0254, 9.25 * 0.0254  # dressed 2x10
+    i_strong = b * d**3 / 12
+    assert member.max_deflection_m == pytest.approx(
+        5 * w * span**4 / (384 * e_pa * i_strong), rel=0.005
+    )
+    assert member.max_abs_moment_nm == pytest.approx(w * span**2 / 8, rel=0.005)
 
 
 @_increment("overrides")
