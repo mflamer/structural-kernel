@@ -34,6 +34,12 @@ xara = [
     "xara>=0.0.13; python_version < '3.14' and sys_platform == 'linux'",
     "opensees>=0.1.27; python_version < '3.14' and sys_platform == 'linux'",
 ]
+# The LLM proposer's real client (ADR 0009). Optional, like xara: the fake
+# client drives the tests and CI, so the SDK is not a core dependency. Install
+# with `uv sync --extra llm` to make real proposals against the Anthropic API.
+llm = [
+    "anthropic>=0.40",
+]
 
 [tool.uv]
 # Resolve only for CPython on real platforms: opensees declares a

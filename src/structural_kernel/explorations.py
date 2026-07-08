@@ -24,13 +24,22 @@ from typing import TYPE_CHECKING, Annotated, Literal, Protocol
 from pydantic import Field, JsonValue
 
 from structural_kernel.canonical import content_hash
-from structural_kernel.decisions import GravityFramingStrategyParams, parse_params
+from structural_kernel.decisions import (
+    GravityFramingStrategyParams,
+    GridParams,
+    GridRegion,
+    LevelsParams,
+    LoadAssumptionsParams,
+    parse_params,
+)
 from structural_kernel.derivation import DerivedModel, derive
 from structural_kernel.design_checks import run_design_checks
 from structural_kernel.ids import Did, ObjectHash, new_ulid
 from structural_kernel.kernel import load_snapshot, propose
+from structural_kernel.llm import LLMClient, ToolInvocation, ToolSpec
 from structural_kernel.materials import engine_for
 from structural_kernel.objects import (
+    AddDecision,
     Author,
     Changeset,
     ChangesetOp,
@@ -45,6 +54,7 @@ from structural_kernel.solver import EngineAdapter, LocalSolverService, SolveRes
 if TYPE_CHECKING:
     from structural_kernel.store import FileStore
     from structural_kernel.units import Quantity
+    from structural_kernel.validation import ResolvedSnapshot
 
 _FALLBACK_DENSITY_KG_M3 = 500.0  # used only when the grade lacks a density; noted
 
@@ -257,6 +267,242 @@ class SystemChoiceProposer:
     def propose(self, exploration: Exploration, store: FileStore) -> list[Proposal]:
         # The slate is one generation; then the exploration has converged.
         return [] if exploration.generations else list(self._systems)
+
+
+_LLM_SYSTEM_PROMPT = (
+    "You are a licensed structural engineer proposing candidate gravity framing "
+    "systems for a single-story bay. Each candidate will be validated, solved, and "
+    "checked to its own code — NDS 2024 ASD for wood, AISC 360-22 LRFD for steel — "
+    "then ranked by total member mass. Propose a diverse slate (2 to 4 candidates) "
+    "spanning BOTH wood and steel, so the ranking is a real system comparison, not a "
+    "parameter sweep. Every candidate must be a genuine attempt at a working design; "
+    "infeasible candidates are ranked, not hidden, so do not hedge. Call the propose_* "
+    "tools, once per candidate, each with a one- or two-sentence rationale."
+)
+
+_WOOD_TOOL = ToolSpec(
+    name="propose_wood_framing",
+    description=(
+        "Propose a sawn-lumber gravity framing system: repetitive joists on beams on "
+        "posts, designed to NDS 2024 ASD."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "rationale": {
+                "type": "string",
+                "description": "Why this system, in a sentence or two.",
+            },
+            "joist_axis": {
+                "type": "string",
+                "enum": ["x", "y"],
+                "description": "Axis the joists span.",
+            },
+            "joist_spacing_in": {
+                "type": "number",
+                "description": "Joist spacing in inches (e.g. 12, 16, 19.2, 24).",
+            },
+            "member_grade": {
+                "type": "string",
+                "description": "Sawn-lumber grade, e.g. 'DF-L No.2'.",
+            },
+            "joist_section": {"type": "string", "description": "Nominal joist size, e.g. '2x10'."},
+            "beam_section": {"type": "string", "description": "Nominal beam size, e.g. '4x12'."},
+            "post_section": {"type": "string", "description": "Nominal post size, e.g. '4x4'."},
+        },
+        "required": [
+            "rationale",
+            "joist_axis",
+            "joist_spacing_in",
+            "member_grade",
+            "joist_section",
+            "beam_section",
+            "post_section",
+        ],
+        "additionalProperties": False,
+    },
+)
+
+_STEEL_TOOL = ToolSpec(
+    name="propose_steel_framing",
+    description=(
+        "Propose a hot-rolled steel gravity framing system: wide-flange infill beams "
+        "on girders on columns, designed to AISC 360-22 LRFD."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "rationale": {
+                "type": "string",
+                "description": "Why this system, in a sentence or two.",
+            },
+            "beam_axis": {
+                "type": "string",
+                "enum": ["x", "y"],
+                "description": "Axis the infill beams span.",
+            },
+            "beam_spacing_ft": {
+                "type": "number",
+                "description": "Infill-beam spacing in feet (e.g. 5, 6, 8).",
+            },
+            "member_grade": {"type": "string", "description": "Steel grade, e.g. 'A992'."},
+            "beam_section": {
+                "type": "string",
+                "description": "W-shape infill beam, e.g. 'W10x12'.",
+            },
+            "girder_section": {"type": "string", "description": "W-shape girder, e.g. 'W12x16'."},
+            "column_section": {"type": "string", "description": "W-shape column, e.g. 'W8x24'."},
+        },
+        "required": [
+            "rationale",
+            "beam_axis",
+            "beam_spacing_ft",
+            "member_grade",
+            "beam_section",
+            "girder_section",
+            "column_section",
+        ],
+        "additionalProperties": False,
+    },
+)
+
+
+class LLMProposer:
+    """An LLM chooses the structural systems (ADR 0009). Given the base geometry
+    and loads, it calls the propose_wood / propose_steel tools to emit a slate of
+    candidate systems — of different decision kinds — each with a rationale. The
+    model only *proposes*; the malformed and the intent-violating are recorded as
+    rejections by the ordinary pipeline, never committed (the charter's "AI never
+    edits state directly"). One slate is one generation; then it converges.
+
+    Determinism/replay: the emitted proposals are recorded in the exploration, so
+    replay reads the record — it never re-calls the model."""
+
+    def __init__(self, client: LLMClient, *, region: GridRegion) -> None:
+        self._client = client
+        self._region = region
+
+    @property
+    def ref(self) -> ProposerRef:
+        return ProposerRef(strategy="llm", params={"client": self._client.descriptor}, version=1)
+
+    def propose(self, exploration: Exploration, store: FileStore) -> list[Proposal]:
+        if exploration.generations:
+            return []
+        snapshot = load_snapshot(store, exploration.base_commit)
+        grid = _single_decision(snapshot, "grid")
+        levels = _single_decision(snapshot, "levels")
+        loads = _single_decision(snapshot, "load_assumptions")
+        deps = [grid.did, levels.did, loads.did]
+        user = _llm_user_prompt(grid, levels, loads, self._region)
+        invocations = self._client.invoke_tools(
+            system=_LLM_SYSTEM_PROMPT, user=user, tools=[_WOOD_TOOL, _STEEL_TOOL]
+        )
+        proposals: list[Proposal] = []
+        for invocation in invocations:
+            proposal = self._to_proposal(invocation, deps, loads)
+            if proposal is not None:
+                proposals.append(proposal)
+        return proposals
+
+    def _to_proposal(
+        self, invocation: ToolInvocation, deps: list[str], loads: Decision
+    ) -> Proposal | None:
+        data = invocation.input
+        rationale = str(data.get("rationale") or "").strip()
+        if invocation.name == "propose_wood_framing":
+            params: dict[str, JsonValue] = {
+                "region": self._region.model_dump(mode="json"),
+                "system": "joists_on_beams_on_posts",
+                "joist_axis": data.get("joist_axis"),
+                "joist_spacing": {"mag": data.get("joist_spacing_in"), "unit": "in"},
+                "member_family": "sawn_lumber",
+                "member_grade": data.get("member_grade"),
+                "joist_section": data.get("joist_section"),
+                "beam_section": data.get("beam_section"),
+                "post_section": data.get("post_section"),
+            }
+            decision = _framing_decision(
+                "gravity_framing_strategy", "LLM: wood framing", params, deps
+            )
+            ops: list[ChangesetOp] = [AddDecision(decision=decision)]
+            rationale = rationale or "wood joists on beams on posts (LLM proposal)"
+        elif invocation.name == "propose_steel_framing":
+            params = {
+                "region": self._region.model_dump(mode="json"),
+                "system": "beams_on_girders_on_columns",
+                "beam_axis": data.get("beam_axis"),
+                "beam_spacing": {"mag": data.get("beam_spacing_ft"), "unit": "ft"},
+                "member_family": "hot_rolled_steel",
+                "member_grade": data.get("member_grade"),
+                "beam_section": data.get("beam_section"),
+                "girder_section": data.get("girder_section"),
+                "column_section": data.get("column_section"),
+            }
+            decision = _framing_decision(
+                "steel_framing_strategy", "LLM: steel framing", params, deps
+            )
+            # Steel is LRFD, so the candidate also selects the §2.3 strength combos.
+            ops = [AddDecision(decision=decision), ModifyDecision(decision=_to_lrfd_loads(loads))]
+            rationale = rationale or "steel WF beams on girders on columns (LLM proposal)"
+        else:
+            return None  # a tool we do not know how to realize; skip it
+        return Proposal(ops=ops, rationale=rationale)
+
+
+def _single_decision(snapshot: ResolvedSnapshot, kind: str) -> Decision:
+    matches = [d for d in snapshot.decisions.values() if d.kind == kind and d.state == "resolved"]
+    if len(matches) != 1:
+        raise ValueError(
+            f"the LLM proposer needs exactly one {kind} decision; found {len(matches)}"
+        )
+    return matches[0]
+
+
+def _framing_decision(
+    kind: str, title: str, params: dict[str, JsonValue], deps: list[str]
+) -> Decision:
+    return Decision.model_validate(
+        {"did": new_ulid(), "kind": kind, "title": title, "params": params, "deps": list(deps)}
+    )
+
+
+def _to_lrfd_loads(loads: Decision) -> Decision:
+    params = dict(loads.params or {})
+    params["combo_set"] = "ASCE7-22-2.3-LRFD"
+    return loads.model_copy(update={"params": params})
+
+
+def _llm_user_prompt(grid: Decision, levels: Decision, loads: Decision, region: GridRegion) -> str:
+    grid_params = parse_params(grid)
+    assert isinstance(grid_params, GridParams)
+    lines = "; ".join(
+        f"{line.name} (id {line.line_id}, {line.axis}={line.offset.mag:g} {line.offset.unit})"
+        for line in grid_params.lines
+    )
+    level_params = parse_params(levels)
+    assert isinstance(level_params, LevelsParams)
+    levels_txt = "; ".join(
+        f"{lv.name} at {lv.elevation.mag:g} {lv.elevation.unit}" for lv in level_params.levels
+    )
+    load_params = parse_params(loads)
+    assert isinstance(load_params, LoadAssumptionsParams)
+    loads_txt = "; ".join(
+        f"{a.case}={a.magnitude.mag:g} {a.magnitude.unit}" for a in load_params.area_loads
+    )
+    region_txt = f"x from {region.x_from} to {region.x_to}, y from {region.y_from} to {region.y_to}"
+    return (
+        f"Grid lines: {lines}.\n"
+        f"Levels: {levels_txt}.\n"
+        f"Area loads: {loads_txt}.\n"
+        f"Frame the rectangular bay bounded by grid lines {region_txt}.\n"
+        "Hard constraint: every member must pass its strength and deflection checks "
+        "(unity <= 1.0); candidates that fail are ranked below feasible ones.\n"
+        "Available materials: sawn lumber (grades like 'DF-L No.2'; sections like "
+        "'2x8', '2x10', '4x12', '4x4') and hot-rolled steel (grade 'A992'; W-shapes "
+        "like 'W8x10', 'W10x12', 'W12x16', 'W8x24', 'W18x50').\n"
+        "Propose 2 to 4 candidate systems spanning wood and steel."
+    )
 
 
 def _the_framing_decision(exploration: Exploration, store: FileStore) -> Decision:
