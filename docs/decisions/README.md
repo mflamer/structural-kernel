@@ -15,3 +15,4 @@ status changes and they link forward.
 | [0003](0003-solver-agnostic-xara-first.md) | Solver-agnostic kernel; xara as the first engine | Accepted 2026-07-07 |
 | [0004](0004-intent-registry-and-two-site-enforcement.md) | Intent: kernel-fixed shape, open category registry, two-site enforcement | Accepted 2026-07-07 |
 | [0005](0005-eid-identity-scheme.md) | Deterministic element identity: rule-relative eids with per-consumer correspondence | Accepted 2026-07-07 |
+| [0006](0006-ndswood-as-nds-engine.md) | ndswood as the NDS calculation engine behind the design-check adapter | Accepted 2026-07-08 |

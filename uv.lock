@@ -376,6 +376,11 @@ wheels = [
 ]
 
 [[package]]
+name = "ndswood"
+version = "0.1.0"
+source = { git = "https://github.com/mflamer/ndswood#efe3000c577d332a7bccd4d9799fd8aacaaa7d0b" }
+
+[[package]]
 name = "nodeenv"
 version = "1.10.0"
 source = { registry = "https://pypi.org/simple" }
@@ -870,6 +875,7 @@ name = "structural-kernel"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "ndswood" },
     { name = "pydantic" },
 ]
 
@@ -889,6 +895,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ndswood", git = "https://github.com/mflamer/ndswood" },
     { name = "opensees", marker = "python_full_version < '3.14' and sys_platform == 'linux' and extra == 'xara'", specifier = ">=0.1.27" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "xara", marker = "python_full_version < '3.14' and sys_platform == 'linux' and extra == 'xara'", specifier = ">=0.0.13" },

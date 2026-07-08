@@ -59,9 +59,16 @@ Push back when the engineering says otherwise.
   confidence-bucketed tolerances (measured 25mm / estimated 150mm / assumed
   advisory), provenance on every overridden field flowing into bill + analysis,
   and displaced/dangling surfaced as commit *warnings* (never rejections, never
-  dropped). Milestone acceptance: 4 of 7. Next: increment 6, intent checkers +
-  solve-time design checks (NDS ASD unity + L/360–L/240 deflection, both citing
-  intent per ADR 0004) — earns acceptance test 5.
+  dropped). Milestone acceptance: 4 of 7.
+- **ADR 0006** (2026-07-08): ndswood (the PO's verified NDS 2024 library, now at
+  github.com/mflamer/ndswood, private) is the NDS engine behind the design-check
+  adapter — a deliberate carve-out to the clean-slate clause for verified
+  domain-calculation libraries. No ndswood type in persisted schemas; SI⇄lb-in
+  conversion at the adapter; CI reads it via deploy key (NDSWOOD_DEPLOY_KEY).
+  Retires note 0003 item 1 (sections.py goes away with the design-check work).
+  Next: increment 6, intent checkers + solve-time design checks (NDS ASD unity +
+  L/360–L/240 deflection via ndswood, both citing intent per ADR 0004) — earns
+  acceptance test 5.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =

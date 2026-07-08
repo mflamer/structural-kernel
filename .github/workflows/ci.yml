@@ -20,6 +20,15 @@ jobs:
         with:
           python-version: "3.13"
       - uses: astral-sh/setup-uv@v5
+      - name: Grant read access to ndswood (private git dependency)
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.NDSWOOD_DEPLOY_KEY }}" > ~/.ssh/ndswood_key
+          chmod 600 ~/.ssh/ndswood_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git config --global core.sshCommand "ssh -i ~/.ssh/ndswood_key -o IdentitiesOnly=yes"
+          git config --global url."ssh://git@github.com/mflamer/ndswood".insteadOf "https://github.com/mflamer/ndswood"
       - name: Install (with the xara engine)
         run: uv sync --extra xara --python '${{ steps.python.outputs.python-path }}'
       - name: Probe xara availability
@@ -58,6 +67,15 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.14"
+      - name: Grant read access to ndswood (private git dependency)
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.NDSWOOD_DEPLOY_KEY }}" > ~/.ssh/ndswood_key
+          chmod 600 ~/.ssh/ndswood_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git config --global core.sshCommand "ssh -i ~/.ssh/ndswood_key -o IdentitiesOnly=yes"
+          git config --global url."ssh://git@github.com/mflamer/ndswood".insteadOf "https://github.com/mflamer/ndswood"
       - name: Install
         run: uv sync
       - name: Test
