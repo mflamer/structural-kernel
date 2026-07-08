@@ -104,8 +104,8 @@ Push back when the engineering says otherwise.
 - **Phase-2 sprint 1 done (2026-07-08, PO-directed): ADR 0008 — steel framing +
   heterogeneous exploration.** The PO directed the sprint forward, *deliberately
   crossing* the charter's phase-1 halt (chose "proceed to steel" over "review
-  first"; the representation review of the decision graph is still owed and now
-  runs against a graph that already exercises heterogeneous kinds). Added the
+  first"). **The PO has since approved the representation (2026-07-08)** — the
+  gate is lifted; see below. Added the
   `steel_framing_strategy` decision kind (three-tier beams→girders→columns, A992,
   AISC 360-22 **LRFD**, continuously braced Lb=0 — PO domain calls). Wood and
   steel share one geometry rule (`_derive_three_tier`), so steel inherits the
@@ -117,11 +117,15 @@ Push back when the engineering says otherwise.
   ranks candidates of *different kinds* (a wood scheme vs a steel scheme) on the
   method-neutral member-mass metric through the ordinary pipeline (standing
   req. 1, now exercised end to end). All gates green.
+- **Representation review: APPROVED by the PO 2026-07-08.** The phase-1 decision
+  graph, the ADR 0005 eid scheme, and the two-site intent split are the accepted
+  representation for phase 2 (the charter's halt gate is lifted). Approval covers
+  the *structure*, not the flagged domain-value items below, which stay open. See
+  the closing note of `docs/kernel-internals.md`.
 - **Deferred (phase-2 continues, not started):** steel headers (openings don't
   yet induce over steel), interior/multi-bay columns, true LTB with a real Lb,
   HSS/A500 columns, LLM proposer, AI surface, lateral analysis, cost_basis
-  evaluation, concrete framing kind. The **representation review is still owed** —
-  surface it before broadening phase-2 scope further.
+  evaluation, concrete framing kind.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =

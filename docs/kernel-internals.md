@@ -323,8 +323,13 @@ functions, so adding them is an optimization, not a redesign.
 
 ---
 
-*Everything above is the current `main` (121 local tests; 126 through the
-xara engine on CI, green). The pending questions for the representation
-review are the shape questions — is the decision graph, the eid scheme, and
-the two-site intent split the right representation? — plus the domain
-assumptions in `docs/design/0003-phase1-domain-assumptions.md`.*
+*Everything above described the phase-1 `main` at the representation review.
+**The product owner approved the representation on 2026-07-08** — the shape
+questions (is the decision graph, the eid scheme, and the two-site intent split
+the right representation?) are answered yes; the graph, eids, and two-site
+intent split are the accepted foundation for phase 2. Still open, and separate
+from the representation: the domain-value assumptions in
+`docs/design/0003-phase1-domain-assumptions.md` (dressed-size tables, reference
+E, header bearing, combo subsets). Phase 2 has since added steel framing +
+heterogeneous exploration (ADR 0008), which the approval covers as an extension
+of the same representation.*
