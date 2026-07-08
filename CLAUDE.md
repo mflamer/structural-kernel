@@ -76,9 +76,19 @@ Push back when the engineering says otherwise.
   the ADR 0006 adapter): NDS 2024 ASD bending/shear/post-compression + L/360–L/240
   deflection, every check citing its NDS provision (ndswood factor trail) and the
   intent instance it enforces; verification-grade results required. The §6
-  validation pipeline is complete. Milestone acceptance: **5 of 7**. Next:
-  increment 7, the exploration loop (grid-sweep + stub LLM proposer, evaluations
-  as a separate keyed layer, queries) — earns acceptance tests 6 and 7.
+  validation pipeline is complete.
+- **Increment 7 done (2026-07-08): THE PHASE-1 MILESTONE IS COMPLETE — all 7
+  acceptance tests green.** `explorations.py`: the first-class Exploration object
+  (candidates carry physics only; evaluations a separate collection keyed by
+  (result set, cost_basis) per PO reply item 3), kernel-owned lifecycle (real
+  branches through the ordinary pipeline, rejected candidates recorded and never
+  solved, one batch submit per generation, every generation persisted, replayable),
+  grid-sweep + stub LLM proposers behind one protocol. `queries.py`: what_carries /
+  why / header_for_opening / best_variant. Mass metric uses ndswood G with a
+  documented 0.5 fallback (noted in evaluations).
+- **Per the charter: STOP. Phase 1 halts here for the PO's representation review
+  before any scope is added.** Do not start phase-2 work (LLM proposer, AI surface,
+  lateral analysis, cost_basis evaluation) without that review.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =

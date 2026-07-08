@@ -96,6 +96,19 @@ def opening_params() -> OpeningParams:
     )
 
 
+def compact_grid_params() -> GridParams:
+    """A 12 ft x 8 ft bay: small enough that real sweep variants actually pass
+    the NDS checks (the 24 ft milestone beams honestly fail everything)."""
+    return GridParams(
+        lines=[
+            GridLine(line_id=LX1, name="1", axis="x", offset=ft(0.0)),
+            GridLine(line_id=LX2, name="2", axis="x", offset=ft(12.0)),
+            GridLine(line_id=LY_A, name="A", axis="y", offset=ft(0.0)),
+            GridLine(line_id=LY_B, name="B", axis="y", offset=ft(8.0)),
+        ]
+    )
+
+
 def decision(
     kind: str,
     title: str,

@@ -1,9 +1,9 @@
 """Phase 1 milestone acceptance tests (charter: "Phase 1 milestone").
 
-Written early, red until earned. Each is a strict xfail: when an increment
-makes one pass, the suite fails until the marker is removed — progress is
-recorded deliberately, never by accident. Do not weaken these to match the
-implementation; the charter governs.
+Written early and red until earned, increment by increment; as of increment 7
+(2026-07-08) every criterion is green. Do not weaken these to match the
+implementation; the charter governs. Per the charter, passing this suite means
+phase 1 stops here for a representation review before any scope is added.
 """
 
 from pathlib import Path
@@ -13,6 +13,7 @@ import pytest
 from conftest import (
     AUTHOR,
     T0,
+    compact_grid_params,
     decision,
     framing_params,
     grid_params,
@@ -21,7 +22,19 @@ from conftest import (
     loads_params,
     opening_params,
 )
+from reference_solver import ReferenceEngine
 from structural_kernel.derivation import derive
+from structural_kernel.explorations import (
+    Exploration,
+    ExplorationBudget,
+    GridSweepProposer,
+    IntentPreservedConstraint,
+    MetricConstraint,
+    Objective,
+    StubLLMProposer,
+    exploration_ref,
+    run_exploration,
+)
 from structural_kernel.kernel import load_snapshot, propose
 from structural_kernel.objects import (
     AddDecision,
@@ -35,15 +48,11 @@ from structural_kernel.objects import (
     OverrideTarget,
     Snapshot,
 )
+from structural_kernel.queries import best_variant, header_for_opening, what_carries, why
 from structural_kernel.solver import LocalSolverService
 from structural_kernel.store import FileStore
+from structural_kernel.units import Quantity
 from structural_kernel.xara_adapter import XaraEngine, xara_available
-
-
-def _increment(name: str) -> pytest.MarkDecorator:
-    return pytest.mark.xfail(
-        raises=NotImplementedError, strict=True, reason=f"red until increment: {name}"
-    )
 
 
 def _commit_milestone_structure(store: FileStore) -> list[Decision]:
@@ -245,17 +254,134 @@ def test_intent_violating_changeset_is_rejected_with_structured_error(
     assert store.read_ref("main") is not None  # tip unchanged; nothing half-applied
 
 
-@_increment("exploration loop")
-def test_exploration_sweep_is_persisted_replayable_and_pluggable() -> None:
+def _sweep_exploration(store: FileStore, base: str) -> Exploration:
+    return run_exploration(
+        store,
+        base_commit=base,
+        objectives=[Objective(metric="total_member_mass_kg", direction="min")],
+        # "all members under unity" — max_unity spans strength AND the L/360
+        # live / L/240 total deflection checks (they report as unity too)
+        constraints=[
+            MetricConstraint(metric="max_unity", op="<=", value=1.0),
+            IntentPreservedConstraint(),
+        ],
+        proposer=GridSweepProposer(
+            [Quantity(mag=v, unit="in") for v in (12.0, 16.0, 19.2, 24.0)],
+            [{"beam_section": "4x12"}, {"beam_section": "4x10"}, {"beam_section": "4x4"}],
+        ),
+        budget=ExplorationBudget(max_solves=50, max_generations=5),
+        engine=ReferenceEngine(),
+        timestamp=T0,
+    )
+
+
+def _commit_compact_bay(store: FileStore) -> str:
+    grid = decision("grid", "Grid", compact_grid_params())
+    levels = decision("levels", "Levels", levels_params())
+    loads = decision("load_assumptions", "Loads", loads_params())
+    framing = decision(
+        "gravity_framing_strategy",
+        "Bay framing",
+        framing_params(),
+        deps=[grid.did, levels.did, loads.did],
+    )
+    result = propose(
+        store,
+        Changeset(
+            base_commit=None,
+            ops=[AddDecision(decision=d) for d in (grid, levels, loads, framing)],
+        ),
+        author=AUTHOR,
+        message="compact bay",
+        timestamp=T0,
+    )
+    assert result.outcome == "committed", result.issues
+    tip = store.read_ref("main")
+    assert tip is not None
+    return tip
+
+
+def test_exploration_sweep_is_persisted_replayable_and_pluggable(tmp_path: Path) -> None:
     """Joist spacing 12/16/19.2/24 in crossed with beam layouts; objective min weight;
     hard constraints unity and deflection (L/360 live, L/240 total); concurrent
     dispatch; every generation persisted; replayable; stub LLM proposer slots
-    into the same protocol."""
-    raise NotImplementedError
+    into the same protocol. (Earned in increment 7.)"""
+    store = FileStore(tmp_path)
+    base = _commit_compact_bay(store)
+
+    exploration = _sweep_exploration(store, base)
+    [generation] = exploration.generations
+    assert len(generation.candidates) == 12  # 4 spacings x 3 layouts
+    assert all(c.rationale for c in generation.candidates)
+
+    # every generation persisted: the record reloads from the store byte-true
+    stored = store.read_ref(exploration_ref(exploration.exploration_id))
+    assert stored is not None
+    assert store.get_model(stored, Exploration) == exploration
+
+    # replayable: the same base and proposer reproduce the searched space
+    replay = _sweep_exploration(store, base)
+    assert [(c.key, c.changeset) for g in replay.generations for c in g.candidates] == [
+        (c.key, c.changeset) for g in exploration.generations for c in g.candidates
+    ]
+    assert replay.evaluations[-1].ranking == exploration.evaluations[-1].ranking
+
+    # the pluggable seam: an LLM stub satisfies the identical protocol
+    llm = run_exploration(
+        store,
+        base_commit=base,
+        objectives=[Objective(metric="total_member_mass_kg", direction="min")],
+        constraints=[MetricConstraint(metric="max_unity", op="<=", value=1.0)],
+        proposer=StubLLMProposer(),
+        budget=ExplorationBudget(max_solves=5, max_generations=2),
+        engine=ReferenceEngine(),
+        timestamp=T0,
+    )
+    assert llm.proposer.strategy == "llm_stub"
+    [llm_generation] = llm.generations
+    assert llm_generation.candidates[0].committed
 
 
-@_increment("exploration loop")
-def test_milestone_queries_answer() -> None:
+def test_milestone_queries_answer(tmp_path: Path) -> None:
     """ "What carries joist J5?", "why does opening D1 have a header?", "which
-    variant minimizes weight while keeping all members under unity?"."""
-    raise NotImplementedError
+    variant minimizes weight while keeping all members under unity?".
+    (Earned in increment 7.)"""
+    store = FileStore(tmp_path)
+    structure = _commit_milestone_structure(store)
+    tip = store.read_ref("main")
+    assert tip is not None
+    commit = store.get_model(tip, Commit)
+    model = derive(load_snapshot(store, tip), snapshot_hash=commit.snapshot)
+    framing = next(d for d in structure if d.kind == "gravity_framing_strategy")
+    opening = next(d for d in structure if d.kind == "opening")
+
+    # "what carries joist J5?" — an ordinary joist bears on both beams
+    j5 = next(e.eid for e in model.elements if e.role == "joist" and e.eid.endswith("+005"))
+    carriers = what_carries(model, j5)
+    assert carriers and all(c.startswith("bm:") for c in carriers)
+
+    # a redirected joist answers with the header — the load path knows
+    j7 = next(e.eid for e in model.elements if e.role == "joist" and e.eid.endswith("+007"))
+    assert any(c.startswith("hdr:") for c in what_carries(model, j7))
+
+    # "why does opening D1 have a header?" — computed intent, citing the opening
+    header_eid = header_for_opening(model, opening.did)
+    assert header_eid is not None
+    reasons = why(model, header_eid)
+    gravity = next(i for i in reasons if i.category == "gravity_load_path")
+    assert gravity.provenance.inducer == opening.did
+    assert any(r.role == "redirects_load_around" for r in gravity.relations)
+
+    # "which variant minimizes weight while keeping all members under unity?"
+    exploration_store = FileStore(tmp_path / "exploration")
+    base = _commit_compact_bay(exploration_store)
+    exploration = _sweep_exploration(exploration_store, base)
+    winner = best_variant(exploration)
+    assert winner is not None
+    [evaluation] = exploration.evaluations
+    assert evaluation.per_candidate[winner].feasible
+    feasible_masses = [
+        e.metrics["total_member_mass_kg"] for e in evaluation.per_candidate.values() if e.feasible
+    ]
+    assert evaluation.per_candidate[winner].metrics["total_member_mass_kg"] == min(feasible_masses)
+    assert framing.did  # the milestone structure remains the record of why

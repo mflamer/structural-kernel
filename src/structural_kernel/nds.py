@@ -99,6 +99,17 @@ def grade_e_pa(grade: str) -> float | None:
         return None
 
 
+def grade_specific_gravity(grade: str) -> float | None:
+    """Specific gravity G for a sawn grade (mass metrics), when tabulated."""
+    from ndswood import sawn
+
+    try:
+        gravity = getattr(sawn(grade), "G", None)
+    except Exception:
+        return None
+    return None if gravity is None else float(gravity)
+
+
 def combo_duration(cases: set[str]) -> str:
     """ASD load-duration class for a combo's case set (NDS 2.3.2): snow governs
     at two months, occupancy live at ten years, dead-only is permanent."""
