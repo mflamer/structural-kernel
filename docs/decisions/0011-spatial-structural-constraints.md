@@ -67,11 +67,10 @@ Three findings from the note fixed the shape:
   auditable in the exploration's constraint set, beside `IntentPreservedConstraint`;
   enforcement needs no exploration-side code.
 
-- **Clear-span geometry is the *open* band.** A support exactly on a bounding line
-  — the anchored perimeter, or the far line the clear span bears onto — is
-  allowed; only supports interior to the protected strip are forbidden. Otherwise
-  the span could never be carried. (This refines the literal "all vertical
-  supports" scoping question toward buildability; flagged for PO confirmation.)
+- **Clear-span geometry is the *open* band** (PO-confirmed 2026-07-08). A support
+  exactly on a bounding line — the anchored perimeter, or the far line the clear
+  span bears onto — is allowed; only supports interior to the protected strip are
+  forbidden. Otherwise the span could never be carried.
 
 - **Conversational capture is the AI surface** (`capture.py`), reusing the ADR
   0009 LLM seam: given the utterance and the grid vocabulary, an `LLMClient`
@@ -109,9 +108,9 @@ Three findings from the note fixed the shape:
   clear zone — today min-bay is whole-plan or an explicit region); the
   `inferred`→ratify ingestion seam (design doc 0005); solve-site spatial
   predicates; referenced-geometry regions; the cost-basis constraint from the
-  vision (its own standing requirement). Domain item flagged for PO check: the
-  open-band clear-span semantics above. (Min-bay counting bearing walls as bay
-  lines, not just columns, is a PO call — confirmed 2026-07-08.)
+  vision (its own standing requirement). The two domain calls above — the open-band
+  clear-span semantics and min-bay counting bearing walls as bay lines — are both
+  PO-confirmed (2026-07-08).
 
 Supersedes nothing. Establishes the project-constraint object as a third fact
 category in the graph (alongside decisions and overrides) and the predicate

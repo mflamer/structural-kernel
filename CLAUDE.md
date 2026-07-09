@@ -180,11 +180,11 @@ Push back when the engineering says otherwise.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =
-  beam_section; gravity-slice ASD combo subset in `derivation._asd_combos`;
-  clear-span as the *open* band (supports on the bounding line allowed so the span
-  can be carried — ADR 0011). Min-bay counts bearing walls as bay lines alongside
-  columns (PO-confirmed 2026-07-08): a wall defines a bay line on the axis it runs
-  across.
+  beam_section; gravity-slice ASD combo subset in `derivation._asd_combos`.
+- ADR 0011 domain calls, both PO-confirmed 2026-07-08: clear-span is the *open*
+  band (a support exactly on a bounding line is allowed, so the perimeter and the
+  far span-line can carry the span); min-bay counts bearing walls as bay lines
+  alongside columns (a wall defines a bay line on the axis it runs across).
 - Open action (PO, non-blocking): send the xara license-confirmation email
   (`docs/xara-license-email-draft.md`).
 - Increment order: store + schemas → decisions + validation
