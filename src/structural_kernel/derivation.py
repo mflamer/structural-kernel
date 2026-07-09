@@ -44,7 +44,7 @@ from structural_kernel.decisions import (
 )
 from structural_kernel.eids import segment
 from structural_kernel.loads import combos_for
-from structural_kernel.materials import engine_for
+from structural_kernel.materials import engine_for, families
 from structural_kernel.objects import (
     Decision,
     DecisionKind,
@@ -169,8 +169,11 @@ class BillLine(KernelModel):
 
 
 class Countables(KernelModel):
-    """Installation-cost drivers (standing requirement 4). Phase 1 populates
-    piece and connection counts; crane picks are reserved schema room."""
+    """Installation-cost drivers (standing requirement 4; ADR 0012). Piece and
+    connection counts are geometry; ``crane_picks`` sums each member's
+    family-level pick count (steel members pick, hand-set lumber does not).
+    ``None`` remains a valid legacy state (a model derived before picks were
+    emitted); a present count is authoritative."""
 
     piece_count: int
     connection_count: int
@@ -1014,10 +1017,18 @@ def _bill(elements: list[Element], load_path: list[LoadPathEdge]) -> BillOfEleme
         )
         for (role, family, section), (count, total) in sorted(grouped.items())
     ]
+    catalog = families()
+    crane_picks = sum(
+        engine_for(element.family).crane_picks_per_member()
+        for element in elements
+        if element.family in catalog  # induced non-catalog members (wall panels) do not pick
+    )
     return BillOfElements(
         lines=lines,
         countables=Countables(
-            piece_count=len(elements), connection_count=len(load_path), crane_picks=None
+            piece_count=len(elements),
+            connection_count=len(load_path),
+            crane_picks=crane_picks,
         ),
     )
 

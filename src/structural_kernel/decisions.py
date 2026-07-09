@@ -18,8 +18,16 @@ from pydantic import AfterValidator, Field, JsonValue, StringConstraints, model_
 
 from structural_kernel.ids import LineId
 from structural_kernel.materials import families
-from structural_kernel.objects import Decision, Eid, KernelModel, SurveyedAnchor
-from structural_kernel.units import LengthQuantity, PressureQuantity
+from structural_kernel.objects import Decision, Eid, IsoDate, KernelModel, SurveyedAnchor
+from structural_kernel.units import (
+    Dimension,
+    LengthQuantity,
+    MoneyPerTimeQuantity,
+    MoneyQuantity,
+    PressureQuantity,
+    Quantity,
+    TimeQuantity,
+)
 
 Name = Annotated[str, StringConstraints(min_length=1)]
 
@@ -209,6 +217,71 @@ class ExceptionParams(KernelModel):
     location_hint: SurveyedAnchor | None = None
 
 
+# -- cost basis (standing req. 3; ADR 0012) ----------------------------------------
+
+_MATERIAL_RATE_DIMENSIONS = frozenset({Dimension.MONEY_PER_MASS, Dimension.MONEY_PER_VOLUME})
+
+
+class MaterialRate(KernelModel):
+    """The unit material cost of one family. The rate's *dimension* selects the
+    priced quantity: a ``USD/lb`` (money-per-mass) rate prices the member's mass,
+    a ``USD/BF`` (money-per-volume) rate its nominal board-foot volume (Mark's
+    call: steel by weight, sawn lumber by nominal board-feet). Nothing hardcodes
+    'steel is priced by weight' — the unit tag carries it."""
+
+    family: MaterialFamily
+    rate: Quantity
+
+    @model_validator(mode="after")
+    def _priced_by_mass_or_volume(self) -> MaterialRate:
+        if self.rate.dimension not in _MATERIAL_RATE_DIMENSIONS:
+            raise ValueError(
+                f"material rate for {self.family!r} must be money-per-mass (e.g. USD/lb) "
+                f"or money-per-volume (e.g. USD/BF); got {self.rate.unit!r} "
+                f"({self.rate.dimension})"
+            )
+        return self
+
+
+class FamilyLeadTime(KernelModel):
+    """A family's fabrication/delivery lead time. Annotates a ranking (the
+    vision's glulam 14-week flag) — it is never priced into installed cost."""
+
+    family: MaterialFamily
+    lead_time: TimeQuantity  # authored in weeks
+
+
+class CostBasisParams(KernelModel):
+    """A versioned cost assumption: unit costs, crew rate, installation
+    productivities, lead times, an as-of date, a region label, and the
+    uncertainty band a ranking cites (ADR 0012). Committed as an ordinary
+    decision; a revised basis (the fabricator's re-quote) is a *new* cost_basis
+    decision, so every ranking cites exactly what it was priced under."""
+
+    region: Name
+    as_of: IsoDate
+    material_rates: list[MaterialRate] = Field(min_length=1)
+    # Installation drivers (Mark's model): connections priced per connection;
+    # erection hours = piece_count * hours_per_piece + crane_picks * hours_per_pick,
+    # costed at the crew rate.
+    connection_cost: MoneyQuantity
+    crew_rate: MoneyPerTimeQuantity
+    hours_per_piece: TimeQuantity
+    hours_per_pick: TimeQuantity
+    lead_times: list[FamilyLeadTime] = Field(default_factory=list[FamilyLeadTime])
+    # A close comparison is "inside the noise": two installed costs within this
+    # percentage are a coin flip, not a verdict. A dimensionless ratio (like
+    # unity), so a plain percent — but committed on the basis, never hardcoded.
+    uncertainty_pct: float = Field(default=4.0, gt=0.0, lt=100.0)
+
+    @model_validator(mode="after")
+    def _one_rate_per_family(self) -> CostBasisParams:
+        families_seen = [r.family for r in self.material_rates]
+        if len(set(families_seen)) != len(families_seen):
+            raise ValueError("duplicate material rate for a family in the cost basis")
+        return self
+
+
 DecisionParams = (
     GridParams
     | LevelsParams
@@ -218,6 +291,7 @@ DecisionParams = (
     | LateralStrategyParams
     | OpeningParams
     | ExceptionParams
+    | CostBasisParams
 )
 
 
@@ -248,6 +322,8 @@ def parse_params(decision: Decision) -> DecisionParams | None:
             return OpeningParams.model_validate(payload)
         case "exception":
             return ExceptionParams.model_validate(payload)
+        case "cost_basis":
+            return CostBasisParams.model_validate(payload)
         case _:
             assert_never(decision.kind)
 
@@ -264,7 +340,14 @@ def line_refs(params: DecisionParams | None) -> set[str]:
             return set(params.wall_lines)
         case OpeningParams():
             return {params.wall_line, params.offset_from}
-        case GridParams() | LevelsParams() | LoadAssumptionsParams() | ExceptionParams() | None:
+        case (
+            GridParams()
+            | LevelsParams()
+            | LoadAssumptionsParams()
+            | ExceptionParams()
+            | CostBasisParams()
+            | None
+        ):
             return set()
         case _:
             assert_never(params)

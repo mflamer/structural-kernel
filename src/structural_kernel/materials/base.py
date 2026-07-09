@@ -107,6 +107,22 @@ class MaterialEngine(Protocol):
 
     def mass_density_kg_m3(self, grade: str) -> float | None: ...
 
+    # -- takeoff for costing (ADR 0012) --------------------------------------
+    # Quantity facts, alongside section_properties / mass_density. The cost
+    # basis prices mass or volume per family; a family exposes whichever its
+    # trade quotes. `None` means "this family is not priced this way".
+
+    def nominal_volume_m3(self, designation: str, length_m: float) -> float | None:
+        """The board-foot (nominal) volume of one member — lumber's trade
+        pricing basis. Steel, priced by weight, returns None."""
+        ...
+
+    def crane_picks_per_member(self) -> int:
+        """Crane lifts to erect one member of this family — the installation
+        driver that separates a craned system from a hand-set one (phase-2
+        simplification: a family-level fact; glulam-vs-sawn refinement later)."""
+        ...
+
     def check_flexure(self, request: FlexureRequest) -> list[MemberCheckData]: ...
 
     def check_axial(self, request: AxialRequest) -> MemberCheckData: ...

@@ -122,6 +122,13 @@ def test_steel_analysis_carries_lrfd_strength_and_service_combos() -> None:
     assert names["D+L"] == "service"
 
 
+def test_steel_frame_picks_every_primary_member() -> None:
+    # 5 beams + 2 girders + 4 columns, each a crane pick (ADR 0012).
+    model, _ = _steel_model()
+    steel_members = [e for e in model.elements if e.family == "hot_rolled_steel"]
+    assert model.bill.countables.crane_picks == len(steel_members) == 11
+
+
 def test_steel_derivation_is_deterministic() -> None:
     grid = decision("grid", "Grid", grid_params())
     loads = decision("load_assumptions", "Loads", lrfd_loads_params())

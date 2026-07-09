@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from conftest import (
     LX1,
     LX2,
+    cost_basis_params,
     decision,
     framing_params,
     grid_params,
@@ -18,15 +19,18 @@ from conftest import (
     steel_framing_params,
 )
 from structural_kernel.decisions import (
+    CostBasisParams,
     ExceptionParams,
     GravityFramingStrategyParams,
     GridLine,
     GridParams,
     LoadAssumptionsParams,
+    MaterialRate,
     SteelFramingStrategyParams,
     line_refs,
     parse_params,
 )
+from structural_kernel.units import Quantity
 
 
 def test_every_milestone_kind_round_trips_through_parse_params() -> None:
@@ -46,6 +50,7 @@ def test_every_milestone_kind_round_trips_through_parse_params() -> None:
                 value={"designation": "2x10 doubled"},
             ),
         ),
+        ("cost_basis", cost_basis_params()),
     ]
     for kind, params in cases:
         parsed = parse_params(decision(kind, f"test {kind}", params))
@@ -85,6 +90,35 @@ def test_mis_dimensioned_params_are_rejected() -> None:
                 "combo_set": "ASCE7-22-2.4-ASD",
             }
         )
+
+
+def test_cost_basis_has_no_line_refs() -> None:
+    # A cost basis is global — it anchors to no grid line.
+    assert line_refs(cost_basis_params()) == set()
+
+
+def test_material_rate_must_be_money_per_mass_or_volume() -> None:
+    with pytest.raises(ValidationError, match="money-per-mass"):
+        MaterialRate(family="sawn_lumber", rate=Quantity(mag=2.5, unit="USD"))  # bare money
+    with pytest.raises(ValidationError, match="money-per-mass"):
+        MaterialRate(
+            family="hot_rolled_steel", rate=Quantity(mag=2.5, unit="USD/hr")
+        )  # a rate/time
+
+
+def test_cost_basis_rejects_two_rates_for_one_family() -> None:
+    payload = cost_basis_params().model_dump(mode="json")
+    payload["material_rates"].append(
+        {"family": "sawn_lumber", "rate": {"mag": 3.0, "unit": "USD/BF"}}
+    )
+    with pytest.raises(ValidationError, match="duplicate material rate"):
+        CostBasisParams.model_validate(payload)
+
+
+def test_cost_basis_uncertainty_must_be_a_sane_percentage() -> None:
+    payload = cost_basis_params().model_dump(mode="json") | {"uncertainty_pct": 0.0}
+    with pytest.raises(ValidationError):
+        CostBasisParams.model_validate(payload)
 
 
 def test_unknown_load_case_rejected() -> None:

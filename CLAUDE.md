@@ -169,6 +169,28 @@ Push back when the engineering says otherwise.
   predicate `clear_height_below` registers and enforces with zero kernel change.
   `Snapshot` gained `constraints`; the write path gained
   `AddConstraint`/`RemoveConstraint`. All gates green.
+- **Phase-2 sprint 5 done (2026-07-08, PO-directed): ADR 0012 — cost basis +
+  priced evaluation (the vision's item 2).** Cost is now the ranking variable,
+  honestly modeled. A versioned **`cost_basis` decision kind** (`CostBasisParams`:
+  per-family material rates, crew rate, install productivities, lead times,
+  region, as-of date, uncertainty %) is committed as an ordinary decision and
+  derives no geometry. Money is unit-tagged like everything else (`units.py` grew
+  `MONEY`/`VOLUME`/`MONEY_PER_MASS|VOLUME|TIME` dimensions + `USD`, `BF`/`MBF`,
+  `hr`/`week`, `USD/lb`, `USD/BF`, `USD/hr` …); a **rate's dimension is the switch**
+  that selects the priced quantity — `$/lb`→mass, `$/BF`→nominal board-foot
+  volume — so nothing hardcodes "steel is priced by weight" (PO calls: steel by
+  weight, sawn lumber by nominal BF). Derivation now emits `crane_picks` (steel 1
+  per member, wood 0) beside piece/connection counts; two family facts
+  (`crane_picks_per_member`, `nominal_volume_m3`) live on the ADR 0007 material
+  engines. `evaluate(store, exploration, cost_basis)` computes
+  `material + installation = installed_cost_usd` from **stored** quantities and
+  countables (install = connections×conn_cost + [pieces×hrs/piece +
+  picks×hrs/pick]×crew_rate), ranks the heterogeneous wood-vs-steel slate on it,
+  flags lead times (annotate, never price), and states "inside the noise" for a
+  spread within the basis's uncertainty band. **Re-ranking cannot re-solve, by
+  construction** — `evaluate` has no engine; a re-quote is a new `cost_basis`
+  decision, physics reused byte-identically (a real test: steel +20% moves only
+  steel's material cost, wood untouched, same `result_set`). All gates green.
 - **Deferred (phase-2 continues):** the `inferred`→ratify ingestion seam (design
   doc 0005) that would let capture propose from drawings, not just author from
   conversation; min-bay region scoping ("everywhere *else*" relative to the clear
@@ -176,11 +198,16 @@ Push back when the engineering says otherwise.
   governing-member feedback (name the check, not just max_unity) and loop-until-dry
   diversity for the refinement loop; steel headers (openings don't yet induce over
   steel); interior/multi-bay columns; true LTB with a real Lb; HSS/A500 columns;
-  lateral analysis; cost_basis evaluation; concrete framing kind.
+  lateral analysis; concrete framing kind; a cost-budget *project constraint* and
+  glulam/other families (so lead time bites); erection method as more than a
+  family fact; detail-derived connection counts.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =
-  beam_section; gravity-slice ASD combo subset in `derivation._asd_combos`.
+  beam_section; gravity-slice ASD combo subset in `derivation._asd_combos`; the
+  seeded regional cost basis numbers (`$/lb`, `$/BF`, crew rate, erection
+  productivities, uncertainty %) in `tests/conftest.cost_basis_params` — an
+  illustrative placeholder, the ADR 0012 mechanism is what ships, not the prices.
 - ADR 0011 domain calls, both PO-confirmed 2026-07-08: clear-span is the *open*
   band (a support exactly on a bounding line is allowed, so the perimeter and the
   far span-line can carry the span); min-bay counts bearing walls as bay lines

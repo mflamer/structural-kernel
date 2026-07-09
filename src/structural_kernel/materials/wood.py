@@ -76,6 +76,20 @@ class WoodEngine:
             return None
         return None if gravity is None else float(gravity) * 1000.0
 
+    def nominal_volume_m3(self, designation: str, length_m: float) -> float | None:
+        """Nominal board-foot volume: the *nominal* thickness times width (the
+        two numbers in the designation, e.g. 2x10 -> 2 in by 10 in) times length
+        -- how sawn lumber is quoted (Mark's call), independent of the dressed
+        section the checks use."""
+        nominal = _nominal(designation)
+        if nominal is None:
+            return None
+        thickness_in, width_in = nominal
+        return (thickness_in * _M_PER_IN) * (width_in * _M_PER_IN) * length_m
+
+    def crane_picks_per_member(self) -> int:
+        return 0  # sawn lumber is hand-set, not craned
+
     def check_flexure(self, request: FlexureRequest) -> list[MemberCheckData]:
         member = self._member(request.designation, request.grade, request)
         bending: Any = member.check_bending(

@@ -304,7 +304,9 @@ def test_bill_of_elements_and_countables() -> None:
     assert by_key[("header", "4x12")].count == 1
     assert model.bill.countables.piece_count == len(model.elements)
     assert model.bill.countables.connection_count == len(model.load_path)
-    assert model.bill.countables.crane_picks is None  # reserved, honestly absent
+    # An all-wood model is hand-set: zero crane picks (ADR 0012). Wall panels are
+    # non-catalog and never contribute a pick.
+    assert model.bill.countables.crane_picks == 0
 
 
 def test_rendered_eids_are_presentation_only() -> None:

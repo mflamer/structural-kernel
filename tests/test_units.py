@@ -39,6 +39,42 @@ def test_every_dimension_has_a_canonical_si_unit_with_factor_one() -> None:
         assert UNITS[unit].si_factor == 1.0
 
 
+def test_every_dimension_is_reachable_from_a_canonical_unit() -> None:
+    # No dimension may be introduced without a canonical SI spelling.
+    assert set(CANONICAL_SI) == set(Dimension)
+
+
+def test_board_foot_is_one_hundred_forty_four_cubic_inches() -> None:
+    assert Quantity(mag=1.0, unit="BF").si_mag == 144.0 * 0.0254**3
+    assert Quantity(mag=1.0, unit="MBF").si_mag == 1e3 * (144.0 * 0.0254**3)
+
+
+def test_dollars_per_pound_composes_from_nist_pound_mass() -> None:
+    # $1/lb is $ (1/0.45359237) per kg — the pound is the international pound.
+    assert Quantity(mag=1.0, unit="USD/lb").si_mag == 1.0 / 0.45359237
+
+
+def test_dollars_per_hour_is_dollars_per_second_over_thirty_six_hundred() -> None:
+    assert Quantity(mag=90.0, unit="USD/hr").si_mag == 90.0 / 3600.0
+
+
+def test_dollars_per_board_foot_is_a_money_per_volume_rate() -> None:
+    rate = Quantity(mag=2.5, unit="USD/BF")
+    assert rate.dimension is Dimension.MONEY_PER_VOLUME
+    assert rate.si_mag == 2.5 / (144.0 * 0.0254**3)
+
+
+def test_week_is_seven_days_of_seconds() -> None:
+    assert Quantity(mag=14.0, unit="week").si_mag == 14.0 * 604800.0
+
+
+def test_money_rate_dimensions_are_distinct() -> None:
+    assert Quantity(mag=1.0, unit="USD/kg").dimension is Dimension.MONEY_PER_MASS
+    assert Quantity(mag=1.0, unit="USD/m3").dimension is Dimension.MONEY_PER_VOLUME
+    assert Quantity(mag=1.0, unit="USD/s").dimension is Dimension.MONEY_PER_TIME
+    assert Quantity(mag=1.0, unit="USD").dimension is Dimension.MONEY
+
+
 def test_convert_rejects_dimension_mismatch() -> None:
     with pytest.raises(DimensionError):
         convert(Quantity(mag=1.0, unit="ft"), "kip")

@@ -4,6 +4,8 @@ from pydantic import JsonValue
 
 from structural_kernel.decisions import (
     AreaLoad,
+    CostBasisParams,
+    FamilyLeadTime,
     GravityFramingStrategyParams,
     GridLine,
     GridParams,
@@ -12,6 +14,7 @@ from structural_kernel.decisions import (
     Level,
     LevelsParams,
     LoadAssumptionsParams,
+    MaterialRate,
     OpeningParams,
     SteelFramingStrategyParams,
 )
@@ -108,6 +111,30 @@ def steel_framing_params() -> SteelFramingStrategyParams:
         beam_section="W10x12",
         girder_section="W12x16",
         column_section="W8x24",
+    )
+
+
+def usd(value: float, per: str = "USD") -> Quantity:
+    return Quantity(mag=value, unit=per)
+
+
+def cost_basis_params(*, steel_rate_usd_per_lb: float = 1.20) -> CostBasisParams:
+    """A regional default basis (illustrative placeholder — the numbers await PO
+    verification, like the dressed-size table). Steel priced by weight, sawn
+    lumber by nominal board-feet; glulam-style lead time stands in on lumber."""
+    return CostBasisParams(
+        region="Pacific NW (placeholder)",
+        as_of="2026-03-01",
+        material_rates=[
+            MaterialRate(family="hot_rolled_steel", rate=usd(steel_rate_usd_per_lb, "USD/lb")),
+            MaterialRate(family="sawn_lumber", rate=usd(2.50, "USD/BF")),
+        ],
+        connection_cost=usd(85.0),
+        crew_rate=usd(140.0, "USD/hr"),
+        hours_per_piece=Quantity(mag=0.35, unit="hr"),
+        hours_per_pick=Quantity(mag=0.75, unit="hr"),
+        lead_times=[FamilyLeadTime(family="sawn_lumber", lead_time=Quantity(mag=2.0, unit="week"))],
+        uncertainty_pct=4.0,
     )
 
 

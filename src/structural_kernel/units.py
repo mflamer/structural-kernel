@@ -22,6 +22,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, field_validator
 class Dimension(StrEnum):
     LENGTH = "length"
     AREA = "area"
+    VOLUME = "volume"  # material takeoff; board-foot is a (nominal) volume unit
     SECOND_MOMENT_OF_AREA = "second_moment_of_area"
     MASS = "mass"
     TIME = "time"
@@ -29,6 +30,15 @@ class Dimension(StrEnum):
     PRESSURE = "pressure"  # stress and area load share Pa
     LINE_LOAD = "line_load"
     MOMENT = "moment"
+    # Cost basis (ADR 0012). Money is unit-tagged like everything else — no bare
+    # float crosses the cost_basis interface. Rates are named compound dimensions,
+    # the same move LINE_LOAD / MOMENT make; a rate's *dimension* is what tells
+    # the evaluator which physical quantity it prices (mass for steel $/lb,
+    # volume for lumber $/BF, time for a crew $/hr).
+    MONEY = "money"
+    MONEY_PER_MASS = "money_per_mass"
+    MONEY_PER_VOLUME = "money_per_volume"
+    MONEY_PER_TIME = "money_per_time"
 
 
 class DimensionError(ValueError):
@@ -40,6 +50,10 @@ _M_PER_FT: Final = 0.3048
 _M_PER_IN: Final = 0.0254
 _N_PER_LBF: Final = 4.4482216152605
 _N_PER_KIP: Final = 4448.2216152605
+_KG_PER_LB: Final = 0.45359237  # NIST: the international pound (mass)
+_S_PER_HR: Final = 3600.0
+_S_PER_WEEK: Final = 604800.0  # 7 * 24 * 3600
+_M3_PER_BF: Final = 144.0 * _M_PER_IN**3  # a board-foot is 144 cubic inches (nominal)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,12 +72,20 @@ UNITS: Final[dict[str, UnitDef]] = {
     "m2": UnitDef(Dimension.AREA, 1.0),
     "ft2": UnitDef(Dimension.AREA, _M_PER_FT**2),
     "in2": UnitDef(Dimension.AREA, _M_PER_IN**2),
+    # volume (BF/MBF are the lumber trade's nominal-volume units)
+    "m3": UnitDef(Dimension.VOLUME, 1.0),
+    "ft3": UnitDef(Dimension.VOLUME, _M_PER_FT**3),
+    "in3": UnitDef(Dimension.VOLUME, _M_PER_IN**3),
+    "BF": UnitDef(Dimension.VOLUME, _M3_PER_BF),
+    "MBF": UnitDef(Dimension.VOLUME, 1e3 * _M3_PER_BF),
     # second moment of area
     "m4": UnitDef(Dimension.SECOND_MOMENT_OF_AREA, 1.0),
     "in4": UnitDef(Dimension.SECOND_MOMENT_OF_AREA, _M_PER_IN**4),
     # mass / time
     "kg": UnitDef(Dimension.MASS, 1.0),
     "s": UnitDef(Dimension.TIME, 1.0),
+    "hr": UnitDef(Dimension.TIME, _S_PER_HR),
+    "week": UnitDef(Dimension.TIME, _S_PER_WEEK),  # lead times are quoted in weeks
     # force
     "N": UnitDef(Dimension.FORCE, 1.0),
     "kN": UnitDef(Dimension.FORCE, 1e3),
@@ -86,11 +108,22 @@ UNITS: Final[dict[str, UnitDef]] = {
     "kN*m": UnitDef(Dimension.MOMENT, 1e3),
     "kip*ft": UnitDef(Dimension.MOMENT, _N_PER_KIP * _M_PER_FT),
     "kip*in": UnitDef(Dimension.MOMENT, _N_PER_KIP * _M_PER_IN),
+    # money and cost rates (ADR 0012). Single currency, USD, in phase 2.
+    "USD": UnitDef(Dimension.MONEY, 1.0),
+    "USD/kg": UnitDef(Dimension.MONEY_PER_MASS, 1.0),
+    "USD/lb": UnitDef(Dimension.MONEY_PER_MASS, 1.0 / _KG_PER_LB),
+    "USD/m3": UnitDef(Dimension.MONEY_PER_VOLUME, 1.0),
+    "USD/ft3": UnitDef(Dimension.MONEY_PER_VOLUME, 1.0 / _M_PER_FT**3),
+    "USD/BF": UnitDef(Dimension.MONEY_PER_VOLUME, 1.0 / _M3_PER_BF),
+    "USD/MBF": UnitDef(Dimension.MONEY_PER_VOLUME, 1.0 / (1e3 * _M3_PER_BF)),
+    "USD/s": UnitDef(Dimension.MONEY_PER_TIME, 1.0),
+    "USD/hr": UnitDef(Dimension.MONEY_PER_TIME, 1.0 / _S_PER_HR),
 }
 
 CANONICAL_SI: Final[dict[Dimension, str]] = {
     Dimension.LENGTH: "m",
     Dimension.AREA: "m2",
+    Dimension.VOLUME: "m3",
     Dimension.SECOND_MOMENT_OF_AREA: "m4",
     Dimension.MASS: "kg",
     Dimension.TIME: "s",
@@ -98,6 +131,10 @@ CANONICAL_SI: Final[dict[Dimension, str]] = {
     Dimension.PRESSURE: "Pa",
     Dimension.LINE_LOAD: "N/m",
     Dimension.MOMENT: "N*m",
+    Dimension.MONEY: "USD",
+    Dimension.MONEY_PER_MASS: "USD/kg",
+    Dimension.MONEY_PER_VOLUME: "USD/m3",
+    Dimension.MONEY_PER_TIME: "USD/s",
 }
 
 
@@ -177,7 +214,13 @@ def _expect(dimension: Dimension) -> AfterValidator:
 # validation failure — a rejected changeset, not a latent bug.
 LengthQuantity = Annotated[Quantity, _expect(Dimension.LENGTH)]
 AreaQuantity = Annotated[Quantity, _expect(Dimension.AREA)]
+VolumeQuantity = Annotated[Quantity, _expect(Dimension.VOLUME)]
 ForceQuantity = Annotated[Quantity, _expect(Dimension.FORCE)]
 PressureQuantity = Annotated[Quantity, _expect(Dimension.PRESSURE)]
 LineLoadQuantity = Annotated[Quantity, _expect(Dimension.LINE_LOAD)]
 MomentQuantity = Annotated[Quantity, _expect(Dimension.MOMENT)]
+TimeQuantity = Annotated[Quantity, _expect(Dimension.TIME)]
+MoneyQuantity = Annotated[Quantity, _expect(Dimension.MONEY)]
+MoneyPerMassQuantity = Annotated[Quantity, _expect(Dimension.MONEY_PER_MASS)]
+MoneyPerVolumeQuantity = Annotated[Quantity, _expect(Dimension.MONEY_PER_VOLUME)]
+MoneyPerTimeQuantity = Annotated[Quantity, _expect(Dimension.MONEY_PER_TIME)]

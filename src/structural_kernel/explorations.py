@@ -26,6 +26,7 @@ from pydantic import Field, JsonValue
 
 from structural_kernel.canonical import content_hash
 from structural_kernel.decisions import (
+    CostBasisParams,
     GravityFramingStrategyParams,
     GridParams,
     GridRegion,
@@ -52,11 +53,18 @@ from structural_kernel.objects import (
     Timestamp,
 )
 from structural_kernel.solver import EngineAdapter, LocalSolverService, SolveResult
+from structural_kernel.units import Dimension
 
 if TYPE_CHECKING:
+    from structural_kernel.derivation import Element
+    from structural_kernel.materials import MaterialEngine
     from structural_kernel.store import FileStore
     from structural_kernel.units import Quantity
     from structural_kernel.validation import ResolvedSnapshot
+
+# Cost metrics require a committed cost_basis (ADR 0012); an objective naming one
+# without a basis is a configuration error caught before the loop runs.
+_COST_METRICS = frozenset({"material_cost_usd", "installation_cost_usd", "installed_cost_usd"})
 
 _FALLBACK_DENSITY_KG_M3 = 500.0  # used only when the grade lacks a density; noted
 
@@ -139,6 +147,9 @@ class Generation(KernelModel):
 class CandidateEvaluation(KernelModel):
     metrics: dict[str, float]
     feasible: bool
+    # Lead-time and basis annotations that ride alongside the ranking but never
+    # price into it (ADR 0012) — e.g. "glulam: 14 wk lead time (not priced)".
+    flags: list[str] = Field(default_factory=list[str])
 
 
 class Evaluation(KernelModel):
@@ -656,9 +667,20 @@ def run_exploration(
     budget: ExplorationBudget,
     convergence: Convergence | None = None,
     engine: EngineAdapter,
+    cost_basis: Decision | None = None,
     timestamp: Timestamp,
 ) -> Exploration:
-    """Run the loop to completion. Callers configure; they do not orchestrate."""
+    """Run the loop to completion. Callers configure; they do not orchestrate.
+
+    When an objective ranks on cost, pass the committed ``cost_basis`` decision
+    (ADR 0012); every generation's evaluation is priced under it. Re-ranking a
+    finished exploration under a revised basis is a bare ``evaluate`` call — no
+    re-run, no re-solve."""
+    if cost_basis is None and any(o.metric in _COST_METRICS for o in objectives):
+        raise ValueError(
+            "an objective ranks on installed cost but no cost_basis decision was given; "
+            "cost assumptions are decisions (ADR 0012) — commit and pass one"
+        )
     exploration = Exploration(
         exploration_id=new_ulid(),
         base_commit=base_commit,
@@ -728,7 +750,7 @@ def run_exploration(
         exploration = exploration.model_copy(
             update={"generations": [*exploration.generations, generation]}
         )
-        evaluation = evaluate(store, exploration)
+        evaluation = evaluate(store, exploration, cost_basis)
         exploration = exploration.model_copy(
             update={"evaluations": [*exploration.evaluations, evaluation]}
         )
@@ -758,11 +780,16 @@ def run_exploration(
 
 
 def evaluate(
-    store: FileStore, exploration: Exploration, cost_basis: Did | None = None
+    store: FileStore, exploration: Exploration, cost_basis: Decision | None = None
 ) -> Evaluation:
-    """Evaluate all solved candidates from *stored* results — physics is
-    reused, never recomputed. Appending an evaluation under a revised basis is
-    this same call with a different ``cost_basis``."""
+    """Evaluate all solved candidates from *stored* results — physics is reused,
+    never recomputed (this function has no solver; re-ranking cannot re-solve by
+    construction). Passing a committed ``cost_basis`` decision prices every
+    candidate under it (material + installation → installed cost) and ranks on
+    the requested metric; the same call under a revised basis appends a new
+    evaluation over the *same* result set. The basis's own ``did`` is recorded,
+    so a ranking always cites what it was priced under."""
+    basis = _cost_basis_params(cost_basis)
     per_candidate: dict[str, CandidateEvaluation] = {}
     result_refs: dict[str, JsonValue] = {}
     notes: list[str] = []
@@ -779,16 +806,143 @@ def evaluate(
             if mass_note and mass_note not in notes:
                 notes.append(mass_note)
             metrics = {"total_member_mass_kg": mass, "max_unity": report.max_unity}
+            flags: list[str] = []
+            if basis is not None:
+                material, installation, cost_notes = _installed_cost(model, basis)
+                metrics["material_cost_usd"] = material
+                metrics["installation_cost_usd"] = installation
+                metrics["installed_cost_usd"] = material + installation
+                flags = _lead_time_flags(model, basis)
+                for note in cost_notes:
+                    if note not in notes:
+                        notes.append(note)
             feasible = report.all_pass and _metric_constraints_ok(exploration.constraints, metrics)
-            per_candidate[candidate.key] = CandidateEvaluation(metrics=metrics, feasible=feasible)
+            per_candidate[candidate.key] = CandidateEvaluation(
+                metrics=metrics, feasible=feasible, flags=flags
+            )
             result_refs[candidate.key] = candidate.result
+
+    ranking = _rank(exploration.objectives, per_candidate)
+    if cost_basis is not None:
+        assert basis is not None
+        notes.append(
+            f"priced under cost_basis {cost_basis.did} (region {basis.region}, as of {basis.as_of})"
+        )
+        objective = exploration.objectives[0] if exploration.objectives else None
+        if objective is not None and objective.metric in _COST_METRICS:
+            ranked_costs = [
+                per_candidate[k].metrics[objective.metric]
+                for k in ranking
+                if per_candidate[k].feasible and objective.metric in per_candidate[k].metrics
+            ]
+            note = uncertainty_note(ranked_costs, basis.uncertainty_pct)
+            if note:
+                notes.append(note)
 
     return Evaluation(
         result_set=content_hash(result_refs),
-        cost_basis=cost_basis,
+        cost_basis=cost_basis.did if cost_basis is not None else None,
         per_candidate=per_candidate,
-        ranking=_rank(exploration.objectives, per_candidate),
+        ranking=ranking,
         notes="; ".join(notes),
+    )
+
+
+def _cost_basis_params(cost_basis: Decision | None) -> CostBasisParams | None:
+    if cost_basis is None:
+        return None
+    if cost_basis.kind != "cost_basis":
+        raise ValueError(f"decision {cost_basis.did} is a {cost_basis.kind}, not a cost_basis")
+    params = parse_params(cost_basis)
+    assert isinstance(params, CostBasisParams)
+    return params
+
+
+def _installed_cost(model: DerivedModel, basis: CostBasisParams) -> tuple[float, float, list[str]]:
+    """Layered installed cost in canonical USD (ADR 0012): material from derived
+    quantities priced by the family's basis rate, installation from derived
+    countables. Returns (material, installation, notes)."""
+    rate_by_family = {rate.family: rate.rate for rate in basis.material_rates}
+    material = 0.0
+    notes: list[str] = []
+    for element in model.elements:
+        if element.grade is None:
+            continue  # non-catalog induced members (wall panels) carry no material price
+        rate = rate_by_family.get(element.family)
+        if rate is None:
+            notes.append(
+                f"no material rate for {element.family!r} in the basis; "
+                "its members are omitted from material cost"
+            )
+            continue
+        quantity = _priced_quantity(engine_for(element.family), element, rate.dimension)
+        if quantity is None:
+            notes.append(
+                f"cannot price {element.section!r} ({element.family}) by "
+                f"{rate.unit}; omitted from material cost"
+            )
+            continue
+        material += rate.si_mag * quantity  # (USD/kg)*kg or (USD/m3)*m3 -> USD
+
+    countables = model.bill.countables
+    picks = countables.crane_picks or 0
+    erection_hours_s = (
+        countables.piece_count * basis.hours_per_piece.si_mag + picks * basis.hours_per_pick.si_mag
+    )
+    installation = (
+        countables.connection_count * basis.connection_cost.si_mag
+        + erection_hours_s * basis.crew_rate.si_mag  # (USD/s)*s -> USD
+    )
+    return material, installation, notes
+
+
+def _priced_quantity(
+    engine: MaterialEngine, element: Element, dimension: Dimension
+) -> float | None:
+    """The SI quantity a rate of this dimension prices: mass for money-per-mass,
+    nominal volume for money-per-volume. The rate's dimension is the switch."""
+    if dimension is Dimension.MONEY_PER_MASS:
+        assert element.grade is not None
+        section = engine.section_properties(element.section)
+        density = engine.mass_density_kg_m3(element.grade)
+        if section is None or density is None:
+            return None
+        return section.area_m2 * element.length.si_mag * density
+    if dimension is Dimension.MONEY_PER_VOLUME:
+        return engine.nominal_volume_m3(element.section, element.length.si_mag)
+    return None
+
+
+def _lead_time_flags(model: DerivedModel, basis: CostBasisParams) -> list[str]:
+    """Annotate a candidate with the lead time of any family it uses — never
+    priced in, only surfaced (the vision's glulam 14-week flag)."""
+    weeks_by_family = {lt.family: lt.lead_time for lt in basis.lead_times}
+    used = {e.family for e in model.elements if e.family in weeks_by_family}
+    flags: list[str] = []
+    for family in sorted(used):
+        lead = weeks_by_family[family]
+        flags.append(f"{family}: {lead.mag:g} {lead.unit} lead time (annotated, not priced)")
+    return flags
+
+
+def uncertainty_note(ranked_costs: list[float], band_pct: float) -> str:
+    """Is the top cost comparison a verdict or a coin flip (ADR 0012)? Given the
+    feasible candidates' installed costs in ranked (ascending) order and the
+    basis's committed uncertainty band, say whether the two best are "inside the
+    noise". A pure function of the ranked costs — a UI renders this line, and it
+    is unit-tested directly."""
+    if len(ranked_costs) < 2 or ranked_costs[0] <= 0.0:
+        return ""
+    first, second = ranked_costs[0], ranked_costs[1]
+    spread_pct = abs(second - first) / first * 100.0
+    if spread_pct <= band_pct:
+        return (
+            f"top two within {spread_pct:.1f}% on installed cost (band {band_pct:g}%) — "
+            "inside the noise, a coin flip on cost"
+        )
+    return (
+        f"best installed cost leads the runner-up by {spread_pct:.1f}% "
+        f"(outside the {band_pct:g}% band)"
     )
 
 

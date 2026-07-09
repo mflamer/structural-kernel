@@ -96,7 +96,9 @@ class IntentInstance(KernelModel):
 # Closed union (design doc 0001 §2.3): adding a kind means adding derivation
 # logic anyway. `steel_framing_strategy` is the first phase-2 kind (ADR 0008) —
 # the sibling of `gravity_framing_strategy` that heterogeneous exploration ranks
-# against it. `cost_basis` (standing req. 3) joins when priced evaluation does.
+# against it. `cost_basis` (standing req. 3, ADR 0012) is the versioned cost
+# assumption exploration rankings cite; it derives no geometry — it is pure data
+# the evaluation layer reads — so it has no rule in derivation.
 DecisionKind = Literal[
     "grid",
     "levels",
@@ -106,6 +108,7 @@ DecisionKind = Literal[
     "lateral_strategy",
     "opening",
     "exception",
+    "cost_basis",
 ]
 
 

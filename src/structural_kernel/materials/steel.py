@@ -69,6 +69,12 @@ class SteelEngine:
     def mass_density_kg_m3(self, grade: str) -> float | None:
         return _STEEL_DENSITY_KG_M3
 
+    def nominal_volume_m3(self, designation: str, length_m: float) -> float | None:
+        return None  # steel is priced by weight, not by volume
+
+    def crane_picks_per_member(self) -> int:
+        return 1  # each primary steel member is a crane pick (Mark's phase-2 call)
+
     def check_flexure(self, request: FlexureRequest) -> list[MemberCheckData]:
         member = self._member(request.designation, request.grade, request.method)
         axis = "x" if request.axis == "strong" else "y"

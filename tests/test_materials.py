@@ -89,6 +89,22 @@ def test_steel_section_and_modulus() -> None:
     assert steel.section_properties("W18x999") is None
 
 
+def test_costing_takeoff_facts_differ_by_family() -> None:
+    # Steel is craned and priced by weight; sawn lumber is hand-set and priced by
+    # nominal board-feet (ADR 0012). The engines carry that family fact.
+    wood = engine_for("sawn_lumber")
+    steel = engine_for("hot_rolled_steel")
+    assert steel.crane_picks_per_member() == 1
+    assert wood.crane_picks_per_member() == 0
+    assert steel.nominal_volume_m3("W18x50", 6.0) is None  # steel is not volume-priced
+    # a 2x10 over 8 ft: 2 in x 10 in nominal x length
+    length_m = 8.0 * 0.3048
+    assert wood.nominal_volume_m3("2x10", length_m) == pytest.approx(
+        (2 * 0.0254) * (10 * 0.0254) * length_m
+    )
+    assert wood.nominal_volume_m3("W18x50", length_m) is None  # not a sawn designation
+
+
 def test_steel_flexure_is_moment_dimensioned_and_cites_aisc() -> None:
     steel = engine_for("hot_rolled_steel")
     checks = steel.check_flexure(
