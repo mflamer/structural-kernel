@@ -196,16 +196,52 @@ Push back when the engineering says otherwise.
   kind** registers and re-ranks with zero kernel change (mirrors the
   `clear_height_below` predicate proof); plus material-only-vs-installed re-rank
   with no solve, and steel +20% moving only steel's material cost. All gates green.
-- **Deferred (phase-2 continues):** the `inferred`→ratify ingestion seam (design
-  doc 0005) that would let capture propose from drawings, not just author from
-  conversation; min-bay region scoping ("everywhere *else*" relative to the clear
-  zone); solve-site spatial predicates; referenced-geometry regions;
-  governing-member feedback (name the check, not just max_unity) and loop-until-dry
-  diversity for the refinement loop; steel headers (openings don't yet induce over
-  steel); interior/multi-bay columns; true LTB with a real Lb; HSS/A500 columns;
-  lateral analysis; concrete framing kind; a cost-budget *project constraint* and
-  glulam/other families (so lead time bites); erection method as more than a
-  family fact; detail-derived connection counts.
+- **Phase-2 sprint 6 done (2026-07-09, PO-directed): ADR 0013 — the ingestion seam
+  (drawings/models in, `inferred`→ratify), steered by note 0004, graduating design
+  doc 0005 for the delivered scope.** Real structural constraints can now arrive as
+  *drawings/models*, not just conversation, without corrupting the intent thesis.
+  Three increments: **(A) provenance** — `ConstraintProvenance` becomes a union
+  `authored | inferred` (PO call: lands on constraints, not `IntentProvenance`);
+  `inferred` carries `basis` (referenced-geometry version + sheet/region ref + the
+  model's reason), a machine-reading `confidence` (`high|medium|low`, new scale),
+  and a nullable ratification record. `provenance.is_binding` is False until
+  ratified — **inert by type**: `check_project_constraints` (stage 5) skips it with
+  a `constraint_unratified` warning, and since candidates flow through stage 5 the
+  same rule covers the exploration binding (a candidate in an unratified region is
+  *not* killed pre-solve). `RatifyConstraint` (a human op) promotes it; the kernel
+  records who/when/`modified`, an optional `edited` correction takes effect, and the
+  inferred basis is preserved (`source` stays `inferred` — "AI read it, engineer
+  agreed" ≠ "engineer authored"). **(B) referenced geometry** — a read-only,
+  content-addressed, versioned kind (`ReferencedGeometry`: `ref_id` lineage +
+  `version` + `external` provenance [source file, sha256, importer, date] +
+  light-typed IFC grids/storeys), never a `Decision`, excluded from the derivation
+  hash; `Snapshot.referenced_geometry`; ops `AddReferencedGeometry`/
+  `ReissueReferencedGeometry`. A `ReferencedRegion` joins the ADR 0005 `Region`
+  union (anchors by `(ref_id, grid_id)`, tracks the grid by name); an unresolved
+  reference is inert, never fatal. A deterministic IFC grid/storey **fixture
+  importer** (`referenced.py`) is the adapter boundary — no IFC/DWG/vision type
+  crosses the kernel; a real `ifcopenshell` importer plugs in at the same seam.
+  Re-issue reconciliation (`reconfirmations`) diffs old-vs-new at the re-issue
+  commit and surfaces every constraint whose anchor moved/was removed as a
+  `referenced_reissue` warning — a moved anchor **keeps binding** at the new
+  position (PO call: never silently drop a hard constraint mid-churn). **(C)
+  capture reads referenced geometry** — `capture.py` input grows to utterance
+  *and/or* referenced geometry, same `capture_*` tools (optional `reason`/
+  `confidence` fields on the ingestion path); drawing-sourced captures commit
+  `inferred`, conversation stays `authored`. Whole path on `FakeLLMClient` (no
+  vision model, no secrets); propose-only + replay-by-record hold. All gates green.
+- **Deferred (phase-2 continues):** richer multimodal reading (real sheet/raster/
+  DWG understanding, sketches, conversation-as-referenced-source — design doc 0005
+  §6–7); inferred *intent* over elements (this sprint infers constraints only); a
+  re-confirm *action* clearing a `referenced_reissue` flag (today: re-capture or
+  re-author); decisions declaring the referenced region they frame; min-bay region
+  scoping ("everywhere *else*" relative to the clear zone); solve-site spatial
+  predicates; governing-member feedback (name the check, not just max_unity) and
+  loop-until-dry diversity for the refinement loop; steel headers (openings don't
+  yet induce over steel); interior/multi-bay columns; true LTB with a real Lb;
+  HSS/A500 columns; lateral analysis; concrete framing kind; a cost-budget *project
+  constraint* and glulam/other families (so lead time bites); erection method as
+  more than a family fact; detail-derived connection counts.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =
