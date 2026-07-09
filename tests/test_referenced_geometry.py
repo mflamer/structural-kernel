@@ -1,12 +1,15 @@
-"""The ingestion seam, increment B: referenced geometry as a first-class kind and
-the IFC grid/level fixture importer (design doc 0005 §3, ADR 0013; PO note 0004).
+"""The ingestion seam, increments B and C: referenced geometry as a first-class
+kind + the IFC grid/level fixture importer, and capture reading off it (design doc
+0005 §3–4, ADR 0013; PO note 0004).
 
 Referenced geometry is read-only external context a constraint anchors to — never
 a decision. This proves: a deterministic IFC grid/storey import produces
 referenced geometry a captured region anchors to (a real gridline-id), the region
 resolves and enforces exactly like a decision-grid region, an unresolved
-referenced anchor is inert (never fatal), and a re-issued model surfaces affected
-constraints for re-confirmation rather than silently diverging.
+referenced anchor is inert (never fatal), a re-issued model surfaces affected
+constraints for re-confirmation rather than silently diverging, and — increment C
+— capture reads referenced geometry to propose ``inferred`` constraints (inert
+until ratified) entirely on a fake reader (no vision model, no secrets).
 """
 
 from __future__ import annotations
@@ -14,6 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from conftest import AUTHOR, T0, decision, ft, inches, psf
+from structural_kernel.canonical import content_hash, model_document
+from structural_kernel.capture import ConstraintCapture
 from structural_kernel.decisions import (
     AreaLoad,
     GravityFramingStrategyParams,
@@ -26,6 +31,7 @@ from structural_kernel.decisions import (
 )
 from structural_kernel.ids import new_ulid
 from structural_kernel.kernel import ProposeResult, load_snapshot, propose
+from structural_kernel.llm import FakeLLMClient, ToolInvocation
 from structural_kernel.objects import (
     AddConstraint,
     AddDecision,
@@ -33,7 +39,10 @@ from structural_kernel.objects import (
     Changeset,
     ChangesetOp,
     Decision,
+    InferredConstraintProvenance,
     ProjectConstraint,
+    RatifyConstraint,
+    ReferencedGeometry,
     ReissueReferencedGeometry,
 )
 from structural_kernel.referenced import IMPORTER_VERSION, import_ifc_grids_and_levels
@@ -334,3 +343,146 @@ def test_adding_a_duplicate_referenced_lineage_is_rejected(tmp_path: Path) -> No
     result = _try(store, [AddReferencedGeometry(geometry=again)], tip)
     assert result.outcome == "rejected"
     assert any(i.code == "duplicate_referenced_geometry" for i in result.issues)
+
+
+# -- increment C: capture reads referenced geometry ----------------------------------
+
+
+def _clear_span_reader() -> FakeLLMClient:
+    """A canned vision reader: proposes a clear-span off referenced grid GA, with a
+    stated basis and confidence — no real vision model in the test path."""
+    return FakeLLMClient(
+        [
+            ToolInvocation(
+                name="capture_clear_span",
+                input={
+                    "statement": "The west 40 ft reads as column-free.",
+                    "anchor_line": "GA",
+                    "extent_ft": 40.0,
+                    "side": "greater",
+                    "reason": "the west assembly bay carries no columns in the arch model",
+                    "confidence": "high",
+                },
+            )
+        ]
+    )
+
+
+def _import_geometry(store: FileStore, base: str) -> tuple[str, str, ReferencedGeometry]:
+    ref_id = new_ulid()
+    geometry = import_ifc_grids_and_levels(V1, ref_id=ref_id, imported_at="2026-07-09")
+    tip = _commit(store, [AddReferencedGeometry(geometry=geometry)], base)
+    return tip, ref_id, geometry
+
+
+def test_capture_from_referenced_commits_an_inferred_constraint(tmp_path: Path) -> None:
+    """Reading a drawing proposes an ``inferred`` constraint anchored to a real
+    referenced gridline, carrying the model's basis (the version it read, its
+    reason) and confidence — committed inert, never authored."""
+    store = FileStore(tmp_path)
+    base, _dids = _base_bay(store)
+    tip, ref_id, geometry = _import_geometry(store, base)
+    ops = ConstraintCapture(_clear_span_reader()).capture(
+        utterance="", snapshot=load_snapshot(store, tip), referenced=geometry
+    )
+    assert len(ops) == 1
+    committed = _commit(store, ops, tip)
+
+    [constraint] = list(load_snapshot(store, committed).constraints.values())
+    prov = constraint.provenance
+    assert isinstance(prov, InferredConstraintProvenance)  # inferred, not authored
+    assert prov.captured_by == "fake-llm"  # the reader identity is recorded
+    assert prov.confidence == "high"
+    assert prov.ratified is None  # inert until an engineer ratifies it
+    # The basis records exactly the referenced-geometry version that was read.
+    assert prov.basis.referenced_geometry == content_hash(model_document(geometry))
+    assert "GA" in (prov.basis.region_ref or "")
+    region = constraint.region.model_dump()
+    assert region["kind"] == "referenced_region"
+    assert region["ref_id"] == ref_id
+    assert region["anchor_grid"] == "GA"
+
+
+def _capture_and_commit(store: FileStore) -> tuple[str, dict[str, Decision], str]:
+    """Import geometry, read an inferred clear-span off it, and commit it."""
+    base, dids = _base_bay(store)
+    tip, _ref_id, geometry = _import_geometry(store, base)
+    ops = ConstraintCapture(_clear_span_reader()).capture(
+        utterance="", snapshot=load_snapshot(store, tip), referenced=geometry
+    )
+    captured = _commit(store, ops, tip)
+    [constraint] = list(load_snapshot(store, captured).constraints.values())
+    return captured, dids, constraint.cid
+
+
+def test_a_captured_inferred_constraint_is_inert_before_ratify(tmp_path: Path) -> None:
+    """The whole path on a fake reader (no vision model, no secrets): a post in the
+    captured reading's region commits, inert, with an unratified warning."""
+    store = FileStore(tmp_path)
+    captured, dids, _cid = _capture_and_commit(store)
+    result = _try(store, [AddDecision(decision=_framing_decision(dids, WX, MX))], captured)
+    assert result.outcome == "committed", result.issues
+    assert any(i.code == "constraint_unratified" for i in result.issues)
+
+
+def test_a_captured_inferred_constraint_binds_after_ratify(tmp_path: Path) -> None:
+    """Ratified on its own branch, the captured reading then enforces exactly like
+    an authored one — a post in its region is rejected."""
+    store = FileStore(tmp_path)
+    captured, dids, cid = _capture_and_commit(store)
+    ratified = _commit(
+        store, [RatifyConstraint(cid=cid, ratified_by="eng:mark", ratified_at=T0)], captured
+    )
+    result = _try(store, [AddDecision(decision=_framing_decision(dids, WX, MX))], ratified)
+    assert result.outcome == "rejected"
+    assert any(i.code == "constraint_violation" and i.detail["cid"] == cid for i in result.issues)
+
+
+def test_capture_without_referenced_geometry_stays_authored(tmp_path: Path) -> None:
+    """Conversation authoring is unchanged — a spoken constraint (no referenced
+    geometry) commits ``authored`` and binding, not inferred."""
+    store = FileStore(tmp_path)
+    base, _dids = _base_bay(store)
+    client = FakeLLMClient(
+        [
+            ToolInvocation(
+                name="capture_clear_span",
+                input={
+                    "statement": "The west 40 ft must be column-free.",
+                    "anchor_line": WX,
+                    "extent_ft": 40.0,
+                    "side": "greater",
+                },
+            )
+        ]
+    )
+    ops = ConstraintCapture(client).capture(
+        utterance="the west 40 feet needs to be column-free", snapshot=load_snapshot(store, base)
+    )
+    tip = _commit(store, ops, base)
+    [constraint] = list(load_snapshot(store, tip).constraints.values())
+    assert constraint.provenance.source == "authored"
+    assert constraint.region.model_dump()["kind"] == "offset_band"
+
+
+def test_a_malformed_inferred_capture_is_a_recorded_rejection(tmp_path: Path) -> None:
+    """A bad reading is bounded by the pipeline, not parser quality: a min-bay
+    proposal missing its spacing builds an op but the schema stage rejects it —
+    never a silent or corrupt write."""
+    store = FileStore(tmp_path)
+    base, _dids = _base_bay(store)
+    tip, _ref_id, geometry = _import_geometry(store, base)
+    client = FakeLLMClient(
+        [
+            ToolInvocation(
+                name="capture_min_bay",
+                input={"statement": "keep bays generous", "confidence": "low"},
+            )
+        ]
+    )
+    ops = ConstraintCapture(client).capture(
+        utterance="", snapshot=load_snapshot(store, tip), referenced=geometry
+    )
+    result = _try(store, ops, tip)
+    assert result.outcome == "rejected"
+    assert any(i.code == "schema_invalid" for i in result.issues)
