@@ -1,6 +1,6 @@
 """The ingestion seam, increments B and C: referenced geometry as a first-class
 kind + the IFC grid/level fixture importer, and capture reading off it (design doc
-0005 §3–4, ADR 0013; PO note 0004).
+0005 §3-4, ADR 0013; PO note 0004).
 
 Referenced geometry is read-only external context a constraint anchors to — never
 a decision. This proves: a deterministic IFC grid/storey import produces
