@@ -53,11 +53,12 @@ if TYPE_CHECKING:
 
 _EPS = 1e-6
 
-# What counts as a vertical gravity support: discrete posts/columns and bearing
-# wall segments alike (the clear-span predicate). A "bay" is a column-grid
-# concept, so the minimum-bay predicate counts only the point supports.
+# Vertical gravity supports: discrete posts/columns and bearing wall segments
+# alike. Both predicates range over all three — a bearing wall defines a bay line
+# just as a column does (Mark's call). Min-bay counts a support's coordinate on an
+# axis only where the support is a *point* on that axis, so a wall contributes the
+# line it runs along and not the span it covers.
 _VERTICAL_SUPPORTS = ("post", "column", "wall_segment")
-_POINT_SUPPORTS = ("post", "column")
 
 
 # -- results -------------------------------------------------------------------------
@@ -238,21 +239,28 @@ def _min_bay_spacing(
     snapshot: ResolvedSnapshot,
 ) -> list[ConstraintViolation]:
     """Minimum bay (the vision's "let's not go tighter than 25 foot bays"):
-    adjacent column/post lines along each plan axis must be at least
-    ``min_spacing`` apart, within the region the constraint scopes."""
+    adjacent support lines along each plan axis must be at least ``min_spacing``
+    apart, within the region the constraint scopes. Posts, columns, and bearing
+    walls all define bay lines (Mark's call); a support contributes a line on an
+    axis only where it is a point on that axis, so a wall counts on the axis it
+    runs across and is skipped on the axis it spans."""
     payload = MinBaySpacingPayload.model_validate(constraint.payload)
     minimum = payload.min_spacing.si_mag
-    points = [
-        (e.start.x.si_mag, e.start.y.si_mag)
-        for e in model.elements
-        if e.role in _POINT_SUPPORTS
-        and region.contains_point_closed(e.start.x.si_mag, e.start.y.si_mag)
-    ]
 
     violations: list[ConstraintViolation] = []
-    for index, axis in ((0, "x"), (1, "y")):
-        coords = sorted({point[index] for point in points})
-        for lower, upper in itertools.pairwise(coords):
+    for axis in ("x", "y"):
+        coords: set[float] = set()
+        for element in model.elements:
+            if element.role not in _VERTICAL_SUPPORTS:
+                continue
+            near = element.start.x.si_mag if axis == "x" else element.start.y.si_mag
+            far = element.end.x.si_mag if axis == "x" else element.end.y.si_mag
+            if abs(near - far) > _EPS:
+                continue  # the support spans this axis (a wall running along it)
+            if not region.contains_point_closed(element.start.x.si_mag, element.start.y.si_mag):
+                continue
+            coords.add(near)
+        for lower, upper in itertools.pairwise(sorted(coords)):
             gap = upper - lower
             if gap < minimum - _EPS:
                 violations.append(

@@ -51,8 +51,9 @@ Three findings from the note fixed the shape:
   constraints: `(name, payload schema, check site, checker)`. `register_predicate`
   is the whole extension surface. Two phase-2 instances ship:
   `no_vertical_support_within` (clear-span — no post/column/bearing-wall inside
-  the region) and `min_bay_spacing` (no two column/post lines closer than the
-  minimum). A predicate declares its **check site**: `commit` (topology/geometry
+  the region) and `min_bay_spacing` (no two support lines closer than the minimum;
+  posts, columns, and bearing walls all define bay lines — a wall counts on the
+  axis it runs across). A predicate declares its **check site**: `commit` (topology/geometry
   over the dry-run derived model) or `solve` (demand-dependent, reserved).
 
 - **Enforced identically on every changeset**, as `propose` stage 5: after intent
@@ -108,8 +109,9 @@ Three findings from the note fixed the shape:
   clear zone — today min-bay is whole-plan or an explicit region); the
   `inferred`→ratify ingestion seam (design doc 0005); solve-site spatial
   predicates; referenced-geometry regions; the cost-basis constraint from the
-  vision (its own standing requirement). Domain items flagged for PO check: the
-  open-band clear-span semantics above; min-bay over point supports only.
+  vision (its own standing requirement). Domain item flagged for PO check: the
+  open-band clear-span semantics above. (Min-bay counting bearing walls as bay
+  lines, not just columns, is a PO call — confirmed 2026-07-08.)
 
 Supersedes nothing. Establishes the project-constraint object as a third fact
 category in the graph (alongside decisions and overrides) and the predicate

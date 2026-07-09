@@ -182,8 +182,9 @@ Push back when the engineering says otherwise.
   `member_grade` as a framing param; header bearing 3 in each side, section =
   beam_section; gravity-slice ASD combo subset in `derivation._asd_combos`;
   clear-span as the *open* band (supports on the bounding line allowed so the span
-  can be carried — ADR 0011); min-bay measured over point supports only (a bay is a
-  column concept).
+  can be carried — ADR 0011). Min-bay counts bearing walls as bay lines alongside
+  columns (PO-confirmed 2026-07-08): a wall defines a bay line on the axis it runs
+  across.
 - Open action (PO, non-blocking): send the xara license-confirmation email
   (`docs/xara-license-email-draft.md`).
 - Increment order: store + schemas → decisions + validation

@@ -28,6 +28,7 @@ from structural_kernel.decisions import (
     GridLine,
     GridParams,
     GridRegion,
+    LateralStrategyParams,
     Level,
     LevelsParams,
     LoadAssumptionsParams,
@@ -340,6 +341,83 @@ def test_bays_at_or_above_the_minimum_commit(tmp_path: Path) -> None:
     # WX..EX is 40 ft in x, 30 ft in y — both above the 25 ft minimum.
     result = _try(store, [AddDecision(decision=_framing_decision(dids, WX, EX))], tip)
     assert result.outcome == "committed", result.issues
+
+
+def test_min_bay_counts_a_bearing_wall_as_a_bay_line(tmp_path: Path) -> None:
+    """A bearing wall defines a bay line just like a column (Mark's call). Corner
+    columns 40 ft apart pass the minimum; a shear wall on the interior y=20 ft line
+    then splits that into two 20 ft bays — under the 25 ft minimum."""
+    my = "L000000Y0"  # interior y-line at 20 ft
+    b40 = "L000000B4"  # y = 40 ft
+    grid = decision(
+        "grid",
+        "Grid",
+        GridParams(
+            lines=[
+                GridLine(line_id=WX, name="1", axis="x", offset=ft(0.0)),
+                GridLine(line_id=EX, name="2", axis="x", offset=ft(40.0)),
+                GridLine(line_id=SY, name="A", axis="y", offset=ft(0.0)),
+                GridLine(line_id=my, name="A.5", axis="y", offset=ft(20.0)),
+                GridLine(line_id=b40, name="B", axis="y", offset=ft(40.0)),
+            ]
+        ),
+    )
+    levels = decision("levels", "Levels", _levels())
+    loads = decision("load_assumptions", "Loads", _loads())
+    framing = decision(
+        "gravity_framing_strategy",
+        "Framing",
+        GravityFramingStrategyParams(
+            region=GridRegion(x_from=WX, x_to=EX, y_from=SY, y_to=b40),
+            system="joists_on_beams_on_posts",
+            joist_axis="y",
+            joist_spacing=inches(16.0),
+            member_family="sawn_lumber",
+            member_grade="DF-L No.2",
+            joist_section="2x10",
+            beam_section="4x12",
+            post_section="4x4",
+        ),
+        deps=[grid.did, levels.did, loads.did],
+    )
+    min_bay = ProjectConstraint.model_validate(
+        {
+            "cid": new_ulid(),
+            "predicate": "min_bay_spacing",
+            "region": {"kind": "whole_plan"},
+            "payload": {"min_spacing": {"mag": 25.0, "unit": "ft"}},
+            "statement": "No bays tighter than 25 ft.",
+            "provenance": {"source": "authored", "captured_by": "human"},
+        }
+    )
+    store = FileStore(tmp_path)
+    # Columns alone sit at y 0 and 40 ft — 40 ft bays, above the minimum: this commits.
+    tip = _commit(
+        store,
+        [
+            AddDecision(decision=grid),
+            AddDecision(decision=levels),
+            AddDecision(decision=loads),
+            AddDecision(decision=framing),
+            AddConstraint(constraint=min_bay),
+        ],
+        None,
+    )
+    # A shear wall on the interior y=20 ft line adds a bay line — two 20 ft bays.
+    wall = decision(
+        "lateral_strategy", "Shear wall", LateralStrategyParams(wall_lines=[my]), deps=[grid.did]
+    )
+    result = _try(store, [AddDecision(decision=wall)], tip)
+    assert result.outcome == "rejected"
+    errors = [i for i in result.issues if i.severity == "error"]
+    # The wall splits the 40 ft span into two 20 ft bays — both under the minimum.
+    assert errors
+    assert all(
+        i.code == "constraint_violation"
+        and i.detail["predicate"] == "min_bay_spacing"
+        and i.detail["axis"] == "y"
+        for i in errors
+    )
 
 
 # -- inert constraint (unresolved anchor) --------------------------------------------
