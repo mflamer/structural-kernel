@@ -24,7 +24,7 @@ from pydantic import (
     model_validator,
 )
 
-from structural_kernel.ids import Did, ObjectHash
+from structural_kernel.ids import Did, LineId, ObjectHash
 from structural_kernel.units import LengthQuantity
 
 # RFC 3339 UTC instants, 'Z' suffix required — one spelling, boringly diffable.
@@ -174,6 +174,80 @@ class OverrideSet(KernelModel):
     overrides: list[Override] = Field(default_factory=list[Override])
 
 
+# -- spatial structural constraints (ADR 0011; PO note 0002) ------------------
+#
+# A *project-level* constraint: a typed predicate over a spatially-anchored
+# region, standing independently of the structural system — which may still be an
+# *open* decision when the constraint is captured (the vision's "west 40 ft
+# column-free", stated before any system exists). It is deliberately neither a
+# `Decision` (it derives no geometry) nor element `intent` (there is no element to
+# hang it on at capture time): it is a first-class committed graph object that the
+# validator and the exploration both read. The predicate *meaning* lives in an
+# open registry (`constraints.py`) — a third predicate kind is a registration,
+# zero kernel edits — and the region in the ADR 0005 anchor vocabulary below.
+
+# A constraint id shares the ULID identity scheme decisions use.
+Cid = Did
+
+
+class OffsetBand(KernelModel):
+    """A band measured perpendicular off a stable anchor grid line. ADR 0005
+    anchors are names, never coordinates: "the west 40 feet" is an offset band
+    off the west line, rendered from it, and it tracks when the line moves."""
+
+    kind: Literal["offset_band"] = "offset_band"
+    anchor: LineId
+    extent: LengthQuantity
+    # The protected side, in the anchor line's own axis coordinate: `greater` =
+    # the higher-coordinate side, `less` = the lower.
+    side: Literal["greater", "less"]
+
+
+class GridBoundedRegion(KernelModel):
+    """A rectangle bounded by four stable grid line-ids (the framing-region shape,
+    reused as a constraint region)."""
+
+    kind: Literal["grid_bounded"] = "grid_bounded"
+    x_from: LineId
+    x_to: LineId
+    y_from: LineId
+    y_to: LineId
+
+
+class WholePlan(KernelModel):
+    """The entire plan — an unbounded region (e.g. a model-wide minimum bay)."""
+
+    kind: Literal["whole_plan"] = "whole_plan"
+
+
+# Extensible by construction: a referenced-geometry region (ADR 0005 external,
+# design doc 0005 ingestion) is a future variant, no predicate need change.
+Region = Annotated[OffsetBand | GridBoundedRegion | WholePlan, Field(discriminator="kind")]
+
+
+class ConstraintProvenance(KernelModel):
+    """Phase-2 capture commits ``authored`` (the engineer's will, or an LLM
+    proposal that only reaches state through the human/pipeline writer). The
+    ``inferred`` source and its ratification record are design doc 0005's
+    ingestion seam — added there, not here."""
+
+    source: Literal["authored"] = "authored"
+    captured_by: Annotated[str, StringConstraints(min_length=1)]  # LLM descriptor or "human"
+
+
+class ProjectConstraint(KernelModel):
+    """A typed predicate over a spatially-anchored region, enforced on every
+    changeset and every exploration candidate (note 0002)."""
+
+    schema_version: Literal[1] = 1
+    cid: Cid
+    predicate: Annotated[str, StringConstraints(min_length=1)]  # constraints.py registry key
+    region: Region
+    payload: dict[str, JsonValue] = Field(default_factory=dict)  # predicate-specific params
+    statement: Annotated[str, StringConstraints(min_length=1)]  # the constraint as captured
+    provenance: ConstraintProvenance
+
+
 # -- changesets (the only write path) -----------------------------------------
 
 
@@ -202,8 +276,24 @@ class RemoveOverride(KernelModel):
     target: OverrideTarget
 
 
+class AddConstraint(KernelModel):
+    op: Literal["add_constraint"] = "add_constraint"
+    constraint: ProjectConstraint
+
+
+class RemoveConstraint(KernelModel):
+    op: Literal["remove_constraint"] = "remove_constraint"
+    cid: Cid
+
+
 ChangesetOp = Annotated[
-    AddDecision | ModifyDecision | RemoveDecision | AddOverride | RemoveOverride,
+    AddDecision
+    | ModifyDecision
+    | RemoveDecision
+    | AddOverride
+    | RemoveOverride
+    | AddConstraint
+    | RemoveConstraint,
     Field(discriminator="op"),
 ]
 
@@ -220,10 +310,13 @@ class Changeset(KernelModel):
 
 
 class Snapshot(KernelModel):
-    """The complete canonical model at an instant: did → decision hash."""
+    """The complete canonical model at an instant: did → decision hash, plus the
+    standing project constraints (cid → constraint hash) that bind every future
+    changeset and exploration candidate."""
 
     schema_version: Literal[1] = 1
     decisions: dict[Did, ObjectHash] = Field(default_factory=dict)
+    constraints: dict[Cid, ObjectHash] = Field(default_factory=dict)
     override_set: ObjectHash | None = None
 
 

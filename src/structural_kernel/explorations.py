@@ -19,6 +19,7 @@ object (design doc 0001 §8, as restructured per the PO reply, item 3).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol
 
 from pydantic import Field, JsonValue
@@ -82,7 +83,23 @@ class IntentPreservedConstraint(KernelModel):
     kind: Literal["intent_preserved"] = "intent_preserved"
 
 
-Constraint = Annotated[MetricConstraint | IntentPreservedConstraint, Field(discriminator="kind")]
+class SpatialConstraintsPreservedConstraint(KernelModel):
+    """The vision's clear-span / min-bay protection as an exploration constraint
+    (ADR 0011, note 0002). Hard, and enforced *structurally*: the standing project
+    constraints live in the base snapshot every candidate branches from, so a
+    candidate that puts a support in a protected region — or bays under the
+    minimum — is rejected by ``propose``'s stage 5 and never solved. Its presence
+    here makes the binding explicit and auditable ("41 rejected pre-solve, most
+    put a column line in the protected zone"); enforcement needs no code beyond
+    the ordinary pipeline, exactly as ``IntentPreservedConstraint``."""
+
+    kind: Literal["spatial_constraints_preserved"] = "spatial_constraints_preserved"
+
+
+Constraint = Annotated[
+    MetricConstraint | IntentPreservedConstraint | SpatialConstraintsPreservedConstraint,
+    Field(discriminator="kind"),
+]
 
 
 class ProposerRef(KernelModel):
@@ -633,8 +650,8 @@ def run_exploration(
     store: FileStore,
     *,
     base_commit: ObjectHash,
-    objectives: list[Objective],
-    constraints: list[Constraint],
+    objectives: Sequence[Objective],
+    constraints: Sequence[Constraint],
     proposer: Proposer,
     budget: ExplorationBudget,
     convergence: Convergence | None = None,
@@ -645,8 +662,8 @@ def run_exploration(
     exploration = Exploration(
         exploration_id=new_ulid(),
         base_commit=base_commit,
-        objectives=objectives,
-        constraints=constraints,
+        objectives=list(objectives),
+        constraints=list(constraints),
         proposer=proposer.ref,
         budget=budget,
         convergence=convergence or Convergence(),

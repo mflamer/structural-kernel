@@ -19,6 +19,7 @@ from structural_kernel.canonical import content_hash, model_document
 from structural_kernel.decisions import GridParams, line_refs, parse_params
 from structural_kernel.ids import ObjectHash
 from structural_kernel.objects import (
+    AddConstraint,
     AddDecision,
     AddOverride,
     Changeset,
@@ -29,6 +30,8 @@ from structural_kernel.objects import (
     ModifyDecision,
     Override,
     OverrideSet,
+    ProjectConstraint,
+    RemoveConstraint,
     RemoveDecision,
     RemoveOverride,
     Snapshot,
@@ -40,13 +43,18 @@ IssueCode = Literal[
     "unknown_decision",
     "duplicate_override",
     "unknown_override",
+    "duplicate_constraint",
+    "unknown_constraint",
     "missing_dep",
     "dependency_cycle",
     "unknown_line_ref",
     "unknown_load_ref",
     "unknown_decision_ref",
     "unknown_intent_category",
+    "unknown_predicate",
     "intent_violation",
+    "constraint_violation",
+    "constraint_inert",
     "derivation_failure",
     "dangling_exception",
     "dangling_override",
@@ -77,6 +85,7 @@ class ResolvedSnapshot:
     """A snapshot with its decision payloads in hand — the runtime working set."""
 
     decisions: dict[str, Decision] = field(default_factory=dict[str, Decision])
+    constraints: dict[str, ProjectConstraint] = field(default_factory=dict[str, ProjectConstraint])
     overrides: OverrideSet = field(default_factory=OverrideSet)
 
 
@@ -152,6 +161,46 @@ def check_schema(changeset: Changeset) -> list[ValidationIssue]:
                             role=relation.role,
                         )
                     )
+    issues += _check_constraint_schema(changeset)
+    return issues
+
+
+def _check_constraint_schema(changeset: Changeset) -> list[ValidationIssue]:
+    """Every added project constraint names a registered predicate and its
+    payload validates against that predicate's schema (ADR 0011). An unknown
+    predicate is the constraint analog of an unknown intent category."""
+    from structural_kernel.constraints import PREDICATES
+
+    issues: list[ValidationIssue] = []
+    for op in changeset.ops:
+        if not isinstance(op, AddConstraint):
+            continue
+        constraint = op.constraint
+        registration = PREDICATES.get(constraint.predicate)
+        if registration is None:
+            issues.append(
+                _error(
+                    "unknown_predicate",
+                    f"constraint {constraint.cid}: predicate {constraint.predicate!r} "
+                    "is not registered",
+                    cid=constraint.cid,
+                    predicate=constraint.predicate,
+                )
+            )
+            continue
+        try:
+            registration.payload_model.model_validate(constraint.payload)
+        except pydantic.ValidationError as exc:
+            issues.append(
+                _error(
+                    "schema_invalid",
+                    f"constraint {constraint.cid}: {constraint.predicate} payload does not "
+                    "validate against the predicate schema",
+                    cid=constraint.cid,
+                    predicate=constraint.predicate,
+                    errors=[e["msg"] for e in exc.errors(include_url=False)],
+                )
+            )
     return issues
 
 
@@ -165,6 +214,7 @@ def apply_changeset(
     (unknown targets, duplicates) are collected; on any error the result is None."""
     issues: list[ValidationIssue] = []
     decisions = dict(base.decisions)
+    constraints = dict(base.constraints)
     overrides: dict[tuple[str, str], Override] = {
         (o.target.eid, o.target.field): o for o in base.overrides.overrides
     }
@@ -230,12 +280,35 @@ def apply_changeset(
                     )
                 else:
                     del overrides[key]
+            case AddConstraint():
+                if op.constraint.cid in constraints:
+                    issues.append(
+                        _error(
+                            "duplicate_constraint",
+                            f"constraint {op.constraint.cid} already exists",
+                            cid=op.constraint.cid,
+                        )
+                    )
+                else:
+                    constraints[op.constraint.cid] = op.constraint
+            case RemoveConstraint():
+                if op.cid not in constraints:
+                    issues.append(
+                        _error(
+                            "unknown_constraint",
+                            f"cannot remove unknown constraint {op.cid}",
+                            cid=op.cid,
+                        )
+                    )
+                else:
+                    del constraints[op.cid]
 
     if issues:
         return None, issues
     return (
         ResolvedSnapshot(
             decisions=decisions,
+            constraints=constraints,
             overrides=OverrideSet(overrides=list(overrides.values())),
         ),
         [],
@@ -330,9 +403,12 @@ def check_referential(result: ResolvedSnapshot) -> list[ValidationIssue]:
 
 
 def resolved_snapshot_hash(result: ResolvedSnapshot) -> str:
-    """The content address the resulting snapshot *would* have — computable
-    before anything is written, so the derivation dry-run's provenance matches
-    the eventual commit exactly."""
+    """The content address of the derivation inputs — decisions and overrides,
+    the only things derivation consumes. Project constraints (ADR 0011) are
+    deliberately excluded: they bind validation, not geometry, so two snapshots
+    differing only in constraints share a derived model and must share this hash
+    (the derivation cache key). Computable before anything is written, so the
+    dry-run's provenance matches the eventual commit's geometry exactly."""
     snapshot = Snapshot(
         decisions={
             did: content_hash(model_document(decision))

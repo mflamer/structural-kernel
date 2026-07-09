@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
+from structural_kernel.constraints import check_project_constraints
 from structural_kernel.derivation import (
     DanglingExceptionError,
     DerivationError,
@@ -27,6 +28,7 @@ from structural_kernel.objects import (
     Decision,
     KernelModel,
     OverrideSet,
+    ProjectConstraint,
     Snapshot,
     Timestamp,
 )
@@ -153,11 +155,41 @@ def propose(
             ],
         )
 
+    # Stage 5: project constraints (ADR 0011) — the standing spatial constraints
+    # bind every changeset, including every exploration candidate. A violation
+    # (a support in a clear-span region, a bay under the minimum) is rejected
+    # citing the constraint; a constraint whose region anchor no longer resolves
+    # goes inert with a warning, the override-like posture (note 0002).
+    constraint_violations, inert = check_project_constraints(derived, result)
+    if constraint_violations:
+        return _reject(
+            store,
+            changeset,
+            [
+                ValidationIssue(
+                    code="constraint_violation",
+                    severity="error",
+                    message=v.message,
+                    detail={"cid": v.cid, "predicate": v.predicate, **v.detail},
+                )
+                for v in constraint_violations
+            ],
+        )
+
     # Overrides that no longer attach cleanly are warnings on the commit —
     # never rejections, never silently dropped (§5). They recompute on every
     # commit, so they persist until a human resolves them.
     warnings = [
         _attachment_warning(a) for a in derived.override_attachments if a.state != "attached"
+    ]
+    warnings += [
+        ValidationIssue(
+            code="constraint_inert",
+            severity="warning",
+            message=w.message,
+            detail={"cid": w.cid, "predicate": w.predicate, **w.detail},
+        )
+        for w in inert
     ]
 
     return _commit(store, changeset, result, author, message, timestamp, ref, current, warnings)
@@ -213,12 +245,16 @@ def load_snapshot(store: FileStore, commit_hash: str | None) -> ResolvedSnapshot
         did: store.get_model(decision_hash, Decision)
         for did, decision_hash in snapshot.decisions.items()
     }
+    constraints = {
+        cid: store.get_model(constraint_hash, ProjectConstraint)
+        for cid, constraint_hash in snapshot.constraints.items()
+    }
     overrides = (
         store.get_model(snapshot.override_set, OverrideSet)
         if snapshot.override_set is not None
         else OverrideSet()
     )
-    return ResolvedSnapshot(decisions=decisions, overrides=overrides)
+    return ResolvedSnapshot(decisions=decisions, constraints=constraints, overrides=overrides)
 
 
 def _commit(
@@ -236,6 +272,10 @@ def _commit(
     snapshot = Snapshot(
         decisions={
             did: store.put_model(decision) for did, decision in sorted(result.decisions.items())
+        },
+        constraints={
+            cid: store.put_model(constraint)
+            for cid, constraint in sorted(result.constraints.items())
         },
         override_set=(store.put_model(result.overrides) if result.overrides.overrides else None),
     )

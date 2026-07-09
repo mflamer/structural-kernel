@@ -148,16 +148,42 @@ Push back when the engineering says otherwise.
   looped generations). Still propose-only, still replay-by-record; the mode is on
   the `ProposerRef`. `ScriptedLLMClient` (slate-per-call) drives the deterministic
   closed-loop tests. All gates green.
-- **Deferred (phase-2 continues):** conversational intent capture (the vision's
-  column-free-region → typed intent); governing-member feedback (name the check,
-  not just max_unity) and loop-until-dry diversity for the refinement loop; steel
-  headers (openings don't yet induce over steel); interior/multi-bay columns;
-  true LTB with a real Lb; HSS/A500 columns; lateral analysis; cost_basis
-  evaluation; concrete framing kind.
+- **Phase-2 sprint 4 done (2026-07-08, PO-directed): ADR 0011 — spatial
+  structural constraints (the vision's item 3).** The PO's note 0002 reframed the
+  "capture the west 40 ft as a clear-span intent" increment into the general
+  primitive: a first-class **`ProjectConstraint`** graph object (a *third* fact
+  category beside decisions and overrides — not a Decision, not element intent,
+  because the constraint precedes the structural system), a region in the ADR 0005
+  anchor vocabulary (`OffsetBand`/`GridBoundedRegion`/`WholePlan`), and an **open
+  predicate registry** (`constraints.py`: `register_predicate` = the whole
+  extension surface, the ADR 0004 move applied to constraints). Two instances:
+  `no_vertical_support_within` (clear-span, open-band — boundary supports allowed
+  so the span can be carried) and `min_bay_spacing`. Enforced as `propose` stage 5
+  on *every* changeset; since exploration candidates are ordinary changesets, a
+  candidate with a post in a protected region is rejected pre-solve
+  (`SpatialConstraintsPreservedConstraint` makes the binding explicit). Capture
+  (`capture.py`) reuses the ADR 0009 LLM seam: an utterance → `capture_*` tool
+  calls → `AddConstraint` ops → the ordinary pipeline; propose-only, authored
+  provenance, model identity recorded; malformed captures are recorded rejections;
+  `FakeLLMClient` drives CI. **The extensibility proof is a real test:** a third
+  predicate `clear_height_below` registers and enforces with zero kernel change.
+  `Snapshot` gained `constraints`; the write path gained
+  `AddConstraint`/`RemoveConstraint`. All gates green.
+- **Deferred (phase-2 continues):** the `inferred`→ratify ingestion seam (design
+  doc 0005) that would let capture propose from drawings, not just author from
+  conversation; min-bay region scoping ("everywhere *else*" relative to the clear
+  zone); solve-site spatial predicates; referenced-geometry regions;
+  governing-member feedback (name the check, not just max_unity) and loop-until-dry
+  diversity for the refinement loop; steel headers (openings don't yet induce over
+  steel); interior/multi-bay columns; true LTB with a real Lb; HSS/A500 columns;
+  lateral analysis; cost_basis evaluation; concrete framing kind.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =
-  beam_section; gravity-slice ASD combo subset in `derivation._asd_combos`.
+  beam_section; gravity-slice ASD combo subset in `derivation._asd_combos`;
+  clear-span as the *open* band (supports on the bounding line allowed so the span
+  can be carried — ADR 0011); min-bay measured over point supports only (a bay is a
+  column concept).
 - Open action (PO, non-blocking): send the xara license-confirmation email
   (`docs/xara-license-email-draft.md`).
 - Increment order: store + schemas → decisions + validation

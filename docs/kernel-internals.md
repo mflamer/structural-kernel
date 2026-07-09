@@ -235,6 +235,27 @@ demand, capacity, unity, the governing provision, the full factor trail
 (CD/CF/Cr… each with its NDS reference), and the intent instance it
 enforces. Only verification-grade solve results are accepted.
 
+**Project constraints** (`constraints.py`, ADR 0011) are the third fact
+category in the graph — beside decisions and overrides — for spatial
+requirements that precede the structural system (the vision's "west 40 ft
+column-free", stated before any system exists). A `ProjectConstraint` is a
+typed **predicate** over a **region** in the ADR 0005 anchor vocabulary
+(`OffsetBand`/`GridBoundedRegion`/`WholePlan`), not a `Decision` (it derives no
+geometry) and not element intent (no element to hang it on at capture time).
+The predicate is an open registry, the ADR 0004 move applied to constraints:
+`(name, payload schema, check site, checker)`, `register_predicate` the whole
+extension surface — `no_vertical_support_within` (clear-span, the *open* band so
+supports on a bounding line can carry the span) and `min_bay_spacing` ship, and
+a `clear_height_below` test fixture proves a third kind drops in with no kernel
+edit. Enforcement is **`propose` stage 5**: every commit-site predicate runs over
+the dry-run derived model, a violation rejects with `constraint_violation`, an
+unresolved region anchor goes inert with a warning (the override-like posture).
+Because exploration candidates are ordinary changesets, a candidate placing a
+support in a protected region is rejected pre-solve — no exploration-side code.
+Conversational capture (`capture.py`) reuses the ADR 0009 LLM seam: an utterance
+becomes `capture_*` tool calls become `AddConstraint` ops through the ordinary
+pipeline; propose-only, authored provenance, the model identity recorded.
+
 ## 8. Solving (`solver.py`, `planar.py`, adapters)
 
 The artifact is the entire solver contract — self-contained, no store

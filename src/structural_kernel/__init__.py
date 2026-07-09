@@ -5,6 +5,14 @@ is derived. See docs/kickoff.md (charter) and docs/design/0001 (architecture).
 """
 
 from structural_kernel.canonical import canonical_bytes, content_hash, model_document
+from structural_kernel.capture import ConstraintCapture
+from structural_kernel.constraints import (
+    PREDICATES,
+    ConstraintViolation,
+    PredicateRegistration,
+    check_project_constraints,
+    register_predicate,
+)
 from structural_kernel.decisions import DecisionParams, parse_params
 from structural_kernel.derivation import (
     DERIVATION_VERSION,
@@ -41,6 +49,7 @@ from structural_kernel.materials import (
     families,
 )
 from structural_kernel.objects import (
+    AddConstraint,
     Author,
     Changeset,
     ChangesetOp,
@@ -50,6 +59,7 @@ from structural_kernel.objects import (
     IntentInstance,
     Override,
     OverrideSet,
+    ProjectConstraint,
     Snapshot,
 )
 from structural_kernel.queries import best_variant, header_for_opening, what_carries, why
@@ -70,12 +80,16 @@ __version__ = "0.0.1"
 __all__ = [
     "DERIVATION_VERSION",
     "ENGINES",
+    "PREDICATES",
     "REGISTRY",
+    "AddConstraint",
     "AnalysisModel",
     "Author",
     "Changeset",
     "ChangesetOp",
     "Commit",
+    "ConstraintCapture",
+    "ConstraintViolation",
     "Decision",
     "DecisionKind",
     "DecisionParams",
@@ -103,6 +117,8 @@ __all__ = [
     "Override",
     "OverrideAttachment",
     "OverrideSet",
+    "PredicateRegistration",
+    "ProjectConstraint",
     "ProposeResult",
     "Proposer",
     "Quantity",
@@ -119,6 +135,7 @@ __all__ = [
     "best_variant",
     "canonical_bytes",
     "check_intent",
+    "check_project_constraints",
     "content_hash",
     "convert",
     "derive",
@@ -133,6 +150,7 @@ __all__ = [
     "parse_params",
     "parse_quantity",
     "propose",
+    "register_predicate",
     "render_eid",
     "run_design_checks",
     "run_exploration",
