@@ -229,7 +229,10 @@ Push back when the engineering says otherwise.
   *and/or* referenced geometry, same `capture_*` tools (optional `reason`/
   `confidence` fields on the ingestion path); drawing-sourced captures commit
   `inferred`, conversation stays `authored`. Whole path on `FakeLLMClient` (no
-  vision model, no secrets); propose-only + replay-by-record hold. All gates green.
+  vision model, no secrets); propose-only + replay-by-record hold. **Sprint
+  complete and landed on main — all gates green (215 passed, 1 skipped; pyright
+  strict clean; ruff clean), CI green on both engines (Linux/xara, Windows/
+  reference).** All five note-0004 acceptance signals proven by tests.
 - **Deferred (phase-2 continues):** richer multimodal reading (real sheet/raster/
   DWG understanding, sketches, conversation-as-referenced-source — design doc 0005
   §6–7); inferred *intent* over elements (this sprint infers constraints only); a
