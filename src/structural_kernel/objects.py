@@ -228,14 +228,72 @@ class WholePlan(KernelModel):
 Region = Annotated[OffsetBand | GridBoundedRegion | WholePlan, Field(discriminator="kind")]
 
 
-class ConstraintProvenance(KernelModel):
-    """Phase-2 capture commits ``authored`` (the engineer's will, or an LLM
-    proposal that only reaches state through the human/pipeline writer). The
-    ``inferred`` source and its ratification record are design doc 0005's
-    ingestion seam — added there, not here."""
+# The provenance taxonomy (design doc 0005 §5, ADR 0013). A constraint is either
+# *authored* — the engineer's design will, or an LLM proposal that only reaches
+# state through the human/pipeline writer — or *inferred* — proposed by the
+# ingestion AI from referenced geometry or a drawing. The backbone distinction:
+# an inferred reading may never enforce or bind an exploration until an engineer
+# ratifies it. `is_binding` encodes exactly that, and stage 5 + the exploration
+# binding both read it, so a low-confidence machine reading can never masquerade
+# as authored intent.
+
+
+class AuthoredConstraintProvenance(KernelModel):
+    """The engineer's design will (a spoken constraint), or an LLM proposal that
+    only reaches state through the human/pipeline writer. Always binding."""
 
     source: Literal["authored"] = "authored"
     captured_by: Annotated[str, StringConstraints(min_length=1)]  # LLM descriptor or "human"
+
+    @property
+    def is_binding(self) -> bool:
+        return True
+
+
+class InferredBasis(KernelModel):
+    """What the ingestion AI read to propose the constraint (design doc 0005 §5):
+    the referenced-geometry version it read, the sheet/region/line reference, and
+    the model's stated reason. The persisted record of the machine reading, kept
+    for the audit trail even after ratification."""
+
+    referenced_geometry: ObjectHash | None = None  # the ReferencedGeometry read (ADR 0013)
+    region_ref: Annotated[str, StringConstraints(min_length=1)] | None = None
+    reason: Annotated[str, StringConstraints(min_length=1)]
+
+
+class RatificationRecord(KernelModel):
+    """The engineer's ratification event (design doc 0005 §5): who confirmed the
+    inferred reading, when, and whether they modified it on the way in. The kernel
+    fills this on a ``RatifyConstraint`` op; its *presence* is what makes an
+    inferred constraint binding — the audit trail keeps "the AI read this and the
+    engineer agreed" distinct from "the engineer authored this outright"."""
+
+    ratified_by: Annotated[str, StringConstraints(min_length=1)]
+    ratified_at: Timestamp
+    modified: bool  # did the engineer change the reading when ratifying?
+
+
+class InferredConstraintProvenance(KernelModel):
+    """A constraint the ingestion AI proposed from a drawing/model (design doc
+    0005 §5). **Inert by type until ratified**: ``is_binding`` is False while
+    ``ratified`` is None, so stage 5 and the exploration binding both skip it. A
+    bad reading yields an unratified proposal, never corrupt authored intent."""
+
+    source: Literal["inferred"] = "inferred"
+    captured_by: Annotated[str, StringConstraints(min_length=1)]  # the vision/LLM descriptor
+    basis: InferredBasis
+    confidence: Literal["high", "medium", "low"]  # machine-reading scale (ADR 0013)
+    ratified: RatificationRecord | None = None
+
+    @property
+    def is_binding(self) -> bool:
+        return self.ratified is not None
+
+
+ConstraintProvenance = Annotated[
+    AuthoredConstraintProvenance | InferredConstraintProvenance,
+    Field(discriminator="source"),
+]
 
 
 class ProjectConstraint(KernelModel):
@@ -289,6 +347,22 @@ class RemoveConstraint(KernelModel):
     cid: Cid
 
 
+class RatifyConstraint(KernelModel):
+    """Promote an inferred, unratified constraint to binding strength — a
+    human-authored event (design doc 0005 §5, ADR 0013). The kernel fills the
+    ``RatificationRecord`` from ``ratified_by``/``ratified_at``; ``edited``, when
+    present, carries the engineer's correction of the reading (its ``cid`` must
+    equal ``cid``), and a real change records ``modified=True``. The inferred
+    basis and confidence are preserved on the promoted constraint — the read is
+    never lost, only ratified."""
+
+    op: Literal["ratify_constraint"] = "ratify_constraint"
+    cid: Cid
+    ratified_by: Annotated[str, StringConstraints(min_length=1)]
+    ratified_at: Timestamp
+    edited: ProjectConstraint | None = None
+
+
 ChangesetOp = Annotated[
     AddDecision
     | ModifyDecision
@@ -296,7 +370,8 @@ ChangesetOp = Annotated[
     | AddOverride
     | RemoveOverride
     | AddConstraint
-    | RemoveConstraint,
+    | RemoveConstraint
+    | RatifyConstraint,
     Field(discriminator="op"),
 ]
 

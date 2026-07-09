@@ -182,12 +182,20 @@ def propose(
     warnings = [
         _attachment_warning(a) for a in derived.override_attachments if a.state != "attached"
     ]
+    # An unratified inferred reading is inert *by design* (design doc 0005 §5) —
+    # a distinct code from a broken constraint (dangling anchor / unregistered
+    # predicate), so a client can tell "waiting on ratification" from "needs a fix".
     warnings += [
         ValidationIssue(
-            code="constraint_inert",
+            code="constraint_unratified" if w.inert_reason == "unratified" else "constraint_inert",
             severity="warning",
             message=w.message,
-            detail={"cid": w.cid, "predicate": w.predicate, **w.detail},
+            detail={
+                "cid": w.cid,
+                "predicate": w.predicate,
+                "inert_reason": w.inert_reason,
+                **w.detail,
+            },
         )
         for w in inert
     ]

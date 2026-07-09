@@ -25,12 +25,15 @@ from structural_kernel.objects import (
     Changeset,
     Decision,
     DecisionTarget,
+    InferredConstraintProvenance,
     KernelModel,
     LoadTarget,
     ModifyDecision,
     Override,
     OverrideSet,
     ProjectConstraint,
+    RatificationRecord,
+    RatifyConstraint,
     RemoveConstraint,
     RemoveDecision,
     RemoveOverride,
@@ -45,6 +48,7 @@ IssueCode = Literal[
     "unknown_override",
     "duplicate_constraint",
     "unknown_constraint",
+    "constraint_not_ratifiable",
     "missing_dep",
     "dependency_cycle",
     "unknown_line_ref",
@@ -55,6 +59,7 @@ IssueCode = Literal[
     "intent_violation",
     "constraint_violation",
     "constraint_inert",
+    "constraint_unratified",
     "derivation_failure",
     "dangling_exception",
     "dangling_override",
@@ -166,16 +171,20 @@ def check_schema(changeset: Changeset) -> list[ValidationIssue]:
 
 
 def _check_constraint_schema(changeset: Changeset) -> list[ValidationIssue]:
-    """Every added project constraint names a registered predicate and its
-    payload validates against that predicate's schema (ADR 0011). An unknown
-    predicate is the constraint analog of an unknown intent category."""
+    """Every added project constraint — and every engineer edit applied on ratify
+    — names a registered predicate and its payload validates against that
+    predicate's schema (ADR 0011). An unknown predicate is the constraint analog
+    of an unknown intent category."""
     from structural_kernel.constraints import PREDICATES
 
     issues: list[ValidationIssue] = []
     for op in changeset.ops:
-        if not isinstance(op, AddConstraint):
+        if isinstance(op, AddConstraint):
+            constraint = op.constraint
+        elif isinstance(op, RatifyConstraint) and op.edited is not None:
+            constraint = op.edited
+        else:
             continue
-        constraint = op.constraint
         registration = PREDICATES.get(constraint.predicate)
         if registration is None:
             issues.append(
@@ -205,6 +214,30 @@ def _check_constraint_schema(changeset: Changeset) -> list[ValidationIssue]:
 
 
 # -- op application ----------------------------------------------------------------
+
+
+def _ratify(existing: ProjectConstraint, op: RatifyConstraint) -> ProjectConstraint:
+    """Promote an inferred, unratified constraint (design doc 0005 §5). The
+    inferred basis and confidence are preserved — the read is never lost, only
+    ratified. When the engineer edited the reading, the edit's predicate/region/
+    payload/statement replace the inferred ones and ``modified`` records the
+    change; the ratification record carries who/when either way."""
+    assert isinstance(existing.provenance, InferredConstraintProvenance)  # apply_changeset guards
+    base = op.edited if op.edited is not None else existing
+    modified = op.edited is not None and (
+        base.predicate != existing.predicate
+        or base.region != existing.region
+        or base.payload != existing.payload
+        or base.statement != existing.statement
+    )
+    provenance = existing.provenance.model_copy(
+        update={
+            "ratified": RatificationRecord(
+                ratified_by=op.ratified_by, ratified_at=op.ratified_at, modified=modified
+            )
+        }
+    )
+    return base.model_copy(update={"provenance": provenance})
 
 
 def apply_changeset(
@@ -302,6 +335,38 @@ def apply_changeset(
                     )
                 else:
                     del constraints[op.cid]
+            case RatifyConstraint():
+                existing = constraints.get(op.cid)
+                if existing is None:
+                    issues.append(
+                        _error(
+                            "unknown_constraint",
+                            f"cannot ratify unknown constraint {op.cid}",
+                            cid=op.cid,
+                        )
+                    )
+                elif (
+                    not isinstance(existing.provenance, InferredConstraintProvenance)
+                    or existing.provenance.ratified is not None
+                ):
+                    issues.append(
+                        _error(
+                            "constraint_not_ratifiable",
+                            f"constraint {op.cid} is not an unratified inferred reading; "
+                            "only inferred, unratified constraints can be ratified",
+                            cid=op.cid,
+                        )
+                    )
+                elif op.edited is not None and op.edited.cid != op.cid:
+                    issues.append(
+                        _error(
+                            "schema_invalid",
+                            f"ratify edit targets cid {op.edited.cid} but ratifies {op.cid}",
+                            cid=op.cid,
+                        )
+                    )
+                else:
+                    constraints[op.cid] = _ratify(existing, op)
 
     if issues:
         return None, issues

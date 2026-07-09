@@ -75,12 +75,16 @@ class ConstraintViolation(KernelModel):
 
 
 class ConstraintWarning(KernelModel):
-    """An inert constraint (unknown predicate, or an unresolved region anchor):
-    surfaced as a commit warning, never dropped, never a rejection."""
+    """An inert constraint — an unratified inferred reading (design doc 0005 §5),
+    an unknown predicate, or an unresolved region anchor: surfaced as a commit
+    warning, never dropped, never a rejection. ``inert_reason`` lets the caller
+    distinguish an unratified reading (still inert *by design*) from a broken
+    constraint (dangling anchor / unregistered predicate)."""
 
     cid: str
     predicate: str
     message: str
+    inert_reason: Literal["unratified", "dangling_anchor", "unregistered_predicate"]
     detail: dict[str, JsonValue] = Field(default_factory=dict)
 
 
@@ -337,6 +341,23 @@ def check_project_constraints(
     warnings: list[ConstraintWarning] = []
 
     for constraint in sorted(snapshot.constraints.values(), key=lambda c: c.cid):
+        # Inert by type until ratified (design doc 0005 §5): an inferred, unratified
+        # reading can never reject a changeset or make an exploration candidate
+        # infeasible. Checked first — an unratified reading does nothing at all,
+        # regardless of predicate or region, until an engineer ratifies it.
+        if not constraint.provenance.is_binding:
+            warnings.append(
+                ConstraintWarning(
+                    cid=constraint.cid,
+                    predicate=constraint.predicate,
+                    message=(
+                        f"constraint {constraint.cid} ({constraint.statement!r}) is an "
+                        "unratified inferred reading; inert until an engineer ratifies it"
+                    ),
+                    inert_reason="unratified",
+                )
+            )
+            continue
         registration = PREDICATES.get(constraint.predicate)
         if registration is None:
             warnings.append(
@@ -347,6 +368,7 @@ def check_project_constraints(
                         f"constraint {constraint.cid}: predicate {constraint.predicate!r} is "
                         "no longer registered; constraint inert"
                     ),
+                    inert_reason="unregistered_predicate",
                 )
             )
             continue
@@ -362,6 +384,7 @@ def check_project_constraints(
                         f"constraint {constraint.cid} ({constraint.statement!r}): its region "
                         "anchor no longer resolves; constraint inert (dangling)"
                     ),
+                    inert_reason="dangling_anchor",
                 )
             )
             continue
