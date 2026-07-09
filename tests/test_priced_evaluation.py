@@ -23,8 +23,12 @@ from conftest import (
     loads_params,
     lrfd_loads_params,
     steel_framing_params,
+    usd,
 )
 from reference_solver import ReferenceEngine
+from structural_kernel.costing import QUANTITY_KINDS, QuantityKind, register_quantity_kind
+from structural_kernel.decisions import CostFactor, DirectPrice
+from structural_kernel.derivation import DerivedModel
 from structural_kernel.explorations import (
     Exploration,
     ExplorationBudget,
@@ -38,10 +42,12 @@ from structural_kernel.explorations import (
     uncertainty_note,
 )
 from structural_kernel.kernel import load_snapshot, propose
+from structural_kernel.materials import engine_for, families
 from structural_kernel.objects import AddDecision, Changeset, Decision, ModifyDecision
 from structural_kernel.queries import best_variant
 from structural_kernel.solver import SolveResult
 from structural_kernel.store import FileStore
+from structural_kernel.units import Dimension
 
 INSTALLED = [Objective(metric="installed_cost_usd", direction="min")]
 CONSTRAINTS = [
@@ -223,20 +229,108 @@ def test_lead_time_is_flagged_but_never_priced_in(tmp_path: Path) -> None:
     kinds = _kind_by_key(store, exploration)
     wood_key = next(k for k, v in kinds.items() if v == "gravity_framing_strategy")
 
-    # the basis carries a sawn-lumber lead time; the wood candidate is flagged...
+    # the basis carries a sawn-lumber lead-time flag factor; the wood candidate is
+    # flagged...
     flags = evaluation.per_candidate[wood_key].flags
-    assert any("sawn_lumber" in f and "lead time" in f and "not priced" in f for f in flags)
+    assert any("sawn_lumber" in f and "not priced" in f for f in flags)
 
-    # ...but the flag changes no number: pricing with the lead time removed gives
-    # the identical installed cost.
-    no_lead = cost_basis_params()
-    no_lead = no_lead.model_copy(update={"lead_times": []})
+    # ...but the flag changes no number: pricing with the flag factor removed gives
+    # the identical installed cost (a flag never sums).
+    full = cost_basis_params()
+    no_lead = full.model_copy(
+        update={"factors": [f for f in full.factors if f.pricing.kind != "flag"]}
+    )
     basis_no_lead = decision("cost_basis", "no lead times", no_lead)
     reranked = evaluate(store, exploration, cost_basis=basis_no_lead)
     assert reranked.per_candidate[wood_key].metrics["installed_cost_usd"] == pytest.approx(
         evaluation.per_candidate[wood_key].metrics["installed_cost_usd"]
     )
     assert not reranked.per_candidate[wood_key].flags
+
+
+# -- material-only vs installed: one schema, re-rankable, no re-solve ----------------------
+
+
+def test_material_only_and_installed_are_one_schema_rerankable(tmp_path: Path) -> None:
+    store = FileStore(tmp_path)
+    installed_basis = decision("cost_basis", "installed", cost_basis_params(installed=True))
+    exploration = _run(store, installed_basis)
+    [installed_eval] = exploration.evaluations
+
+    # the SAME schema, only fewer factors — material factors alone
+    material_basis = decision("cost_basis", "material only", cost_basis_params(installed=False))
+    material_eval = evaluate(store, exploration, cost_basis=material_basis)
+
+    assert material_eval.result_set == installed_eval.result_set  # physics reused, no solve
+    for key, per in material_eval.per_candidate.items():
+        assert per.metrics["installation_cost_usd"] == pytest.approx(0.0)
+        assert per.metrics["installed_cost_usd"] == pytest.approx(per.metrics["material_cost_usd"])
+        # installed cost adds real installation on top of material
+        assert (
+            per.metrics["installed_cost_usd"]
+            < installed_eval.per_candidate[key].metrics["installed_cost_usd"]
+        )
+
+
+# -- generalization proof: a carbon factor, zero kernel change ----------------------------
+
+
+def test_a_carbon_factor_prices_and_ranks_with_no_kernel_change(tmp_path: Path) -> None:
+    # A cost driver nobody planned for — a carbon price over a CO2e countable —
+    # registers and prices with no kernel edit (note 0003's real proof). The
+    # resolver only aggregates derived mass; it invents no physical quantity.
+    intensity = {"hot_rolled_steel": 1.9, "sawn_lumber": -0.9}  # kgCO2e per kg, illustrative
+
+    def resolve_co2e(model: DerivedModel, family: str | None, role: str | None) -> float:
+        total = 0.0
+        for element in model.elements:
+            if element.grade is None or element.family not in families():
+                continue
+            if family is not None and element.family != family:
+                continue
+            engine = engine_for(element.family)
+            section = engine.section_properties(element.section)
+            density = engine.mass_density_kg_m3(element.grade)
+            if section is None or density is None:
+                continue
+            mass = section.area_m2 * element.length.si_mag * density
+            total += mass * intensity.get(element.family, 0.0)
+        return total
+
+    register_quantity_kind(QuantityKind("co2e", Dimension.MASS, resolve_co2e))
+    try:
+        with_carbon = cost_basis_params()  # a copy we extend with a carbon factor
+        with_carbon = with_carbon.model_copy(
+            update={
+                "factors": [
+                    *with_carbon.factors,
+                    CostFactor(
+                        quantity_kind="co2e",
+                        pricing=DirectPrice(unit_price=usd(0.05, "USD/kg")),  # $50/tCO2e
+                        source="carbon price, illustrative",
+                    ),
+                ]
+            }
+        )
+        store = FileStore(tmp_path)
+        exploration = _run(store, decision("cost_basis", "basis + carbon", with_carbon))
+        [carbon_eval] = exploration.evaluations
+        assert best_variant(exploration) is not None  # it ranked
+
+        # the carbon factor actually moved the number: re-pricing the same physics
+        # under a no-carbon basis differs, and it ran no solve.
+        without = evaluate(
+            store, exploration, cost_basis=decision("cost_basis", "no carbon", cost_basis_params())
+        )
+        assert without.result_set == carbon_eval.result_set
+        steel_key = next(
+            k for k, v in _kind_by_key(store, exploration).items() if v == "steel_framing_strategy"
+        )
+        assert carbon_eval.per_candidate[steel_key].metrics["installed_cost_usd"] != pytest.approx(
+            without.per_candidate[steel_key].metrics["installed_cost_usd"]
+        )
+    finally:
+        QUANTITY_KINDS.pop("co2e", None)
 
 
 # -- "inside the noise" -------------------------------------------------------------------

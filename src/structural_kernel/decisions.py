@@ -23,7 +23,6 @@ from structural_kernel.units import (
     Dimension,
     LengthQuantity,
     MoneyPerTimeQuantity,
-    MoneyQuantity,
     PressureQuantity,
     Quantity,
     TimeQuantity,
@@ -217,69 +216,120 @@ class ExceptionParams(KernelModel):
     location_hint: SurveyedAnchor | None = None
 
 
-# -- cost basis (standing req. 3; ADR 0012) ----------------------------------------
+# -- cost basis: a table of priced factors (standing req. 3; ADR 0012, note 0003) --
+#
+# A cost basis is not a record of named price fields (`erected_steel_usd_per_lb`,
+# `crew_rate`, …) — that calcifies the moment a new driver (formwork, a carbon
+# price, a regional multiplier) appears. It is a *list of factors*, each pricing a
+# countable the derived model emits (`costing.py` owns the quantity kinds). Adding
+# a cost driver is appending a factor row; material-only vs installed cost is which
+# factors are present, not two schemas. The registry-not-enum move (ADR 0004/0007)
+# applied to cost.
 
-_MATERIAL_RATE_DIMENSIONS = frozenset({Dimension.MONEY_PER_MASS, Dimension.MONEY_PER_VOLUME})
+# The money-rate dimension a `direct` price must carry to price a quantity of a
+# given kind-dimension: weight (MASS) wants USD/kg, board-feet (VOLUME) USD/m3, a
+# count (None) plain USD-each. The rate's dimension is the switch; nothing
+# hardcodes "steel by weight".
+_MONEY_DIM_FOR: dict[Dimension | None, Dimension] = {
+    Dimension.MASS: Dimension.MONEY_PER_MASS,
+    Dimension.VOLUME: Dimension.MONEY_PER_VOLUME,
+    None: Dimension.MONEY,
+}
 
 
-class MaterialRate(KernelModel):
-    """The unit material cost of one family. The rate's *dimension* selects the
-    priced quantity: a ``USD/lb`` (money-per-mass) rate prices the member's mass,
-    a ``USD/BF`` (money-per-volume) rate its nominal board-foot volume (Mark's
-    call: steel by weight, sawn lumber by nominal board-feet). Nothing hardcodes
-    'steel is priced by weight' — the unit tag carries it."""
+class FactorScope(KernelModel):
+    """Restricts a factor to part of the model — a family ("steel weight"), a role,
+    or both. Absent = the whole model."""
 
-    family: MaterialFamily
-    rate: Quantity
+    family: MaterialFamily | None = None
+    role: Name | None = None
+
+
+class DirectPrice(KernelModel):
+    """A unit price per unit of the quantity kind — ``USD/lb`` over weight,
+    ``USD/BF`` over board-feet, ``USD`` each over a count. Summed into cost."""
+
+    kind: Literal["direct"] = "direct"
+    unit_price: Quantity
+
+
+class LaborPrice(KernelModel):
+    """Labor over a countable: ``crew_rate * productivity * count`` (Mark's call —
+    keep the crew rate and productivity explicit basis data). Productivity is a
+    means-and-methods assumption that lives on the *basis*, never in derivation, so
+    re-ranking under a revised rate still touches no stored physics. Applies to a
+    count kind (picks, pieces, connections). Summed into cost."""
+
+    kind: Literal["labor"] = "labor"
+    crew_rate: MoneyPerTimeQuantity
+    productivity: TimeQuantity  # hours per one of the counted items
+
+
+class FlagAnnotation(KernelModel):
+    """A factor that annotates but never sums into cost (the vision's glulam
+    14-week lead time). It fires when the scoped quantity is present; ``note_value``
+    is the thing to surface (a duration), not a dollar."""
+
+    kind: Literal["flag"] = "flag"
+    note_value: Quantity
+
+
+FactorPricing = Annotated[DirectPrice | LaborPrice | FlagAnnotation, Field(discriminator="kind")]
+
+
+class CostFactor(KernelModel):
+    """One priced factor: a quantity kind (a countable the derived model emits),
+    an optional scope, a pricing, and provenance for the number."""
+
+    quantity_kind: Name
+    scope: FactorScope | None = None
+    pricing: FactorPricing
+    source: Name  # where the number came from: a regional table + date, a quote, an assumption
 
     @model_validator(mode="after")
-    def _priced_by_mass_or_volume(self) -> MaterialRate:
-        if self.rate.dimension not in _MATERIAL_RATE_DIMENSIONS:
+    def _kind_registered_and_price_agrees(self) -> CostFactor:
+        from structural_kernel.costing import quantity_kind, quantity_kinds
+
+        kind = quantity_kind(self.quantity_kind)
+        if kind is None:
             raise ValueError(
-                f"material rate for {self.family!r} must be money-per-mass (e.g. USD/lb) "
-                f"or money-per-volume (e.g. USD/BF); got {self.rate.unit!r} "
-                f"({self.rate.dimension})"
+                f"cost factor names quantity_kind {self.quantity_kind!r}, which no derived "
+                f"countable provides; registered kinds: {sorted(quantity_kinds())}"
+            )
+        pricing = self.pricing
+        if isinstance(pricing, DirectPrice):
+            expected = _MONEY_DIM_FOR.get(kind.dimension)
+            if expected is None:
+                raise ValueError(
+                    f"no money rate is defined for pricing a {kind.dimension} quantity "
+                    f"({self.quantity_kind!r})"
+                )
+            if pricing.unit_price.dimension is not expected:
+                raise ValueError(
+                    f"factor over {self.quantity_kind!r} ({kind.dimension}) needs a {expected} "
+                    f"unit price; got {pricing.unit_price.unit!r} ({pricing.unit_price.dimension})"
+                )
+        elif isinstance(pricing, LaborPrice) and kind.dimension is not None:
+            raise ValueError(
+                f"labor pricing applies to a count kind; {self.quantity_kind!r} is "
+                f"{kind.dimension} — price it directly instead"
             )
         return self
 
 
-class FamilyLeadTime(KernelModel):
-    """A family's fabrication/delivery lead time. Annotates a ranking (the
-    vision's glulam 14-week flag) — it is never priced into installed cost."""
-
-    family: MaterialFamily
-    lead_time: TimeQuantity  # authored in weeks
-
-
 class CostBasisParams(KernelModel):
-    """A versioned cost assumption: unit costs, crew rate, installation
-    productivities, lead times, an as-of date, a region label, and the
-    uncertainty band a ranking cites (ADR 0012). Committed as an ordinary
-    decision; a revised basis (the fabricator's re-quote) is a *new* cost_basis
-    decision, so every ranking cites exactly what it was priced under."""
+    """A versioned cost assumption: a factor table, a region label, an as-of date,
+    and the uncertainty band a ranking cites (ADR 0012, note 0003). Committed as an
+    ordinary decision; a revised basis (the fabricator's re-quote) is a *new*
+    cost_basis decision, so every ranking cites exactly what it was priced under."""
 
     region: Name
     as_of: IsoDate
-    material_rates: list[MaterialRate] = Field(min_length=1)
-    # Installation drivers (Mark's model): connections priced per connection;
-    # erection hours = piece_count * hours_per_piece + crane_picks * hours_per_pick,
-    # costed at the crew rate.
-    connection_cost: MoneyQuantity
-    crew_rate: MoneyPerTimeQuantity
-    hours_per_piece: TimeQuantity
-    hours_per_pick: TimeQuantity
-    lead_times: list[FamilyLeadTime] = Field(default_factory=list[FamilyLeadTime])
+    factors: list[CostFactor] = Field(min_length=1)
     # A close comparison is "inside the noise": two installed costs within this
     # percentage are a coin flip, not a verdict. A dimensionless ratio (like
     # unity), so a plain percent — but committed on the basis, never hardcoded.
     uncertainty_pct: float = Field(default=4.0, gt=0.0, lt=100.0)
-
-    @model_validator(mode="after")
-    def _one_rate_per_family(self) -> CostBasisParams:
-        families_seen = [r.family for r in self.material_rates]
-        if len(set(families_seen)) != len(families_seen):
-            raise ValueError("duplicate material rate for a family in the cost basis")
-        return self
 
 
 DecisionParams = (

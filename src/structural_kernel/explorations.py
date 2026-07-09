@@ -25,8 +25,12 @@ from typing import TYPE_CHECKING, Annotated, Literal, Protocol
 from pydantic import Field, JsonValue
 
 from structural_kernel.canonical import content_hash
+from structural_kernel.costing import quantity_kind
 from structural_kernel.decisions import (
     CostBasisParams,
+    CostFactor,
+    DirectPrice,
+    FlagAnnotation,
     GravityFramingStrategyParams,
     GridParams,
     GridRegion,
@@ -56,11 +60,13 @@ from structural_kernel.solver import EngineAdapter, LocalSolverService, SolveRes
 from structural_kernel.units import Dimension
 
 if TYPE_CHECKING:
-    from structural_kernel.derivation import Element
-    from structural_kernel.materials import MaterialEngine
     from structural_kernel.store import FileStore
     from structural_kernel.units import Quantity
     from structural_kernel.validation import ResolvedSnapshot
+
+# Priced by member volume/weight -> "material"; a count or labor -> "installation".
+# A reporting split only; the ranking metric is installed_cost_usd (their sum).
+_MATERIAL_DIMENSIONS = frozenset({Dimension.MASS, Dimension.VOLUME})
 
 # Cost metrics require a committed cost_basis (ADR 0012); an objective naming one
 # without a basis is a configuration error caught before the loop runs.
@@ -808,14 +814,10 @@ def evaluate(
             metrics = {"total_member_mass_kg": mass, "max_unity": report.max_unity}
             flags: list[str] = []
             if basis is not None:
-                material, installation, cost_notes = _installed_cost(model, basis)
+                material, installation, flags = _price(model, basis)
                 metrics["material_cost_usd"] = material
                 metrics["installation_cost_usd"] = installation
                 metrics["installed_cost_usd"] = material + installation
-                flags = _lead_time_flags(model, basis)
-                for note in cost_notes:
-                    if note not in notes:
-                        notes.append(note)
             feasible = report.all_pass and _metric_constraints_ok(exploration.constraints, metrics)
             per_candidate[candidate.key] = CandidateEvaluation(
                 metrics=metrics, feasible=feasible, flags=flags
@@ -858,71 +860,51 @@ def _cost_basis_params(cost_basis: Decision | None) -> CostBasisParams | None:
     return params
 
 
-def _installed_cost(model: DerivedModel, basis: CostBasisParams) -> tuple[float, float, list[str]]:
-    """Layered installed cost in canonical USD (ADR 0012): material from derived
-    quantities priced by the family's basis rate, installation from derived
-    countables. Returns (material, installation, notes)."""
-    rate_by_family = {rate.family: rate.rate for rate in basis.material_rates}
+def _price(model: DerivedModel, basis: CostBasisParams) -> tuple[float, float, list[str]]:
+    """Sum the basis's factors over the derived model (ADR 0012, note 0003):
+    returns (material, installation, flags) in canonical USD. Each factor prices a
+    countable the derived model emits — the pricing never invents a quantity.
+    Material vs installation is a reporting split by the priced kind's dimension;
+    ``flag`` factors annotate and never sum."""
     material = 0.0
-    notes: list[str] = []
-    for element in model.elements:
-        if element.grade is None:
-            continue  # non-catalog induced members (wall panels) carry no material price
-        rate = rate_by_family.get(element.family)
-        if rate is None:
-            notes.append(
-                f"no material rate for {element.family!r} in the basis; "
-                "its members are omitted from material cost"
-            )
-            continue
-        quantity = _priced_quantity(engine_for(element.family), element, rate.dimension)
-        if quantity is None:
-            notes.append(
-                f"cannot price {element.section!r} ({element.family}) by "
-                f"{rate.unit}; omitted from material cost"
-            )
-            continue
-        material += rate.si_mag * quantity  # (USD/kg)*kg or (USD/m3)*m3 -> USD
-
-    countables = model.bill.countables
-    picks = countables.crane_picks or 0
-    erection_hours_s = (
-        countables.piece_count * basis.hours_per_piece.si_mag + picks * basis.hours_per_pick.si_mag
-    )
-    installation = (
-        countables.connection_count * basis.connection_cost.si_mag
-        + erection_hours_s * basis.crew_rate.si_mag  # (USD/s)*s -> USD
-    )
-    return material, installation, notes
-
-
-def _priced_quantity(
-    engine: MaterialEngine, element: Element, dimension: Dimension
-) -> float | None:
-    """The SI quantity a rate of this dimension prices: mass for money-per-mass,
-    nominal volume for money-per-volume. The rate's dimension is the switch."""
-    if dimension is Dimension.MONEY_PER_MASS:
-        assert element.grade is not None
-        section = engine.section_properties(element.section)
-        density = engine.mass_density_kg_m3(element.grade)
-        if section is None or density is None:
-            return None
-        return section.area_m2 * element.length.si_mag * density
-    if dimension is Dimension.MONEY_PER_VOLUME:
-        return engine.nominal_volume_m3(element.section, element.length.si_mag)
-    return None
-
-
-def _lead_time_flags(model: DerivedModel, basis: CostBasisParams) -> list[str]:
-    """Annotate a candidate with the lead time of any family it uses — never
-    priced in, only surfaced (the vision's glulam 14-week flag)."""
-    weeks_by_family = {lt.family: lt.lead_time for lt in basis.lead_times}
-    used = {e.family for e in model.elements if e.family in weeks_by_family}
+    installation = 0.0
     flags: list[str] = []
-    for family in sorted(used):
-        lead = weeks_by_family[family]
-        flags.append(f"{family}: {lead.mag:g} {lead.unit} lead time (annotated, not priced)")
-    return flags
+    for factor in basis.factors:
+        amount, flag, is_material = _apply_factor(model, factor)
+        if flag is not None:
+            flags.append(flag)
+        elif is_material:
+            material += amount
+        else:
+            installation += amount
+    return material, installation, flags
+
+
+def _apply_factor(model: DerivedModel, factor: CostFactor) -> tuple[float, str | None, bool]:
+    """One factor's contribution: (usd, flag_text_or_None, is_material). The
+    quantity kind was validated present at commit time."""
+    kind = quantity_kind(factor.quantity_kind)
+    assert kind is not None
+    scope_family = factor.scope.family if factor.scope is not None else None
+    scope_role = factor.scope.role if factor.scope is not None else None
+    quantity = kind.resolve(model, scope_family, scope_role)
+    pricing = factor.pricing
+    if isinstance(pricing, FlagAnnotation):
+        if quantity <= 0.0:
+            return 0.0, None, False  # the scoped members are absent; nothing to flag
+        where = scope_family or scope_role or "model"
+        note = pricing.note_value
+        return (
+            0.0,
+            f"{where}: {note.mag:g} {note.unit} (annotated, not priced; source: {factor.source})",
+            False,
+        )
+    if isinstance(pricing, DirectPrice):
+        amount = quantity * pricing.unit_price.si_mag  # (USD/unit)*unit -> USD
+        return amount, None, kind.dimension in _MATERIAL_DIMENSIONS
+    # LaborPrice: count * (hours/each) * (USD/s) -> USD; always installation.
+    amount = quantity * pricing.productivity.si_mag * pricing.crew_rate.si_mag
+    return amount, None, False
 
 
 def uncertainty_note(ranked_costs: list[float], band_pct: float) -> str:

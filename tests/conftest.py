@@ -5,16 +5,19 @@ from pydantic import JsonValue
 from structural_kernel.decisions import (
     AreaLoad,
     CostBasisParams,
-    FamilyLeadTime,
+    CostFactor,
+    DirectPrice,
+    FactorScope,
+    FlagAnnotation,
     GravityFramingStrategyParams,
     GridLine,
     GridParams,
     GridRegion,
+    LaborPrice,
     LateralStrategyParams,
     Level,
     LevelsParams,
     LoadAssumptionsParams,
-    MaterialRate,
     OpeningParams,
     SteelFramingStrategyParams,
 )
@@ -118,22 +121,67 @@ def usd(value: float, per: str = "USD") -> Quantity:
     return Quantity(mag=value, unit=per)
 
 
-def cost_basis_params(*, steel_rate_usd_per_lb: float = 1.20) -> CostBasisParams:
-    """A regional default basis (illustrative placeholder — the numbers await PO
-    verification, like the dressed-size table). Steel priced by weight, sawn
-    lumber by nominal board-feet; glulam-style lead time stands in on lumber."""
+def _material_factors(*, steel_rate_usd_per_lb: float) -> list[CostFactor]:
+    """The two material factors: steel by weight ($/lb), sawn lumber by nominal
+    board-feet ($/BF) — two rows, not two schema fields (note 0003)."""
+    return [
+        CostFactor(
+            quantity_kind="member_weight",
+            scope=FactorScope(family="hot_rolled_steel"),
+            pricing=DirectPrice(unit_price=usd(steel_rate_usd_per_lb, "USD/lb")),
+            source="regional table, Mar 2026",
+        ),
+        CostFactor(
+            quantity_kind="board_feet",
+            scope=FactorScope(family="sawn_lumber"),
+            pricing=DirectPrice(unit_price=usd(2.50, "USD/BF")),
+            source="regional table, Mar 2026",
+        ),
+    ]
+
+
+def cost_basis_params(
+    *, steel_rate_usd_per_lb: float = 1.20, installed: bool = True
+) -> CostBasisParams:
+    """A regional default basis as a factor table (illustrative placeholder — the
+    numbers await PO verification, like the dressed-size table). ``installed=False``
+    keeps only the material factors, so material-only and installed bases are the
+    *same schema* differing only in which factors are present (note 0003)."""
+    factors = _material_factors(steel_rate_usd_per_lb=steel_rate_usd_per_lb)
+    if installed:
+        factors += [
+            CostFactor(
+                quantity_kind="connection_count",
+                pricing=DirectPrice(unit_price=usd(85.0)),
+                source="assembly assumption",
+            ),
+            CostFactor(
+                quantity_kind="piece_count",
+                pricing=LaborPrice(
+                    crew_rate=usd(140.0, "USD/hr"), productivity=Quantity(mag=0.35, unit="hr")
+                ),
+                source="crew productivity assumption",
+            ),
+            CostFactor(
+                quantity_kind="crane_picks",
+                pricing=LaborPrice(
+                    crew_rate=usd(140.0, "USD/hr"), productivity=Quantity(mag=0.75, unit="hr")
+                ),
+                source="crew productivity assumption",
+            ),
+            # Lead time: a flag factor over the family's presence — surfaced, never
+            # summed. Stands in for the vision's glulam 14-week flag on lumber.
+            CostFactor(
+                quantity_kind="piece_count",
+                scope=FactorScope(family="sawn_lumber"),
+                pricing=FlagAnnotation(note_value=Quantity(mag=2.0, unit="week")),
+                source="regional lead time",
+            ),
+        ]
     return CostBasisParams(
         region="Pacific NW (placeholder)",
         as_of="2026-03-01",
-        material_rates=[
-            MaterialRate(family="hot_rolled_steel", rate=usd(steel_rate_usd_per_lb, "USD/lb")),
-            MaterialRate(family="sawn_lumber", rate=usd(2.50, "USD/BF")),
-        ],
-        connection_cost=usd(85.0),
-        crew_rate=usd(140.0, "USD/hr"),
-        hours_per_piece=Quantity(mag=0.35, unit="hr"),
-        hours_per_pick=Quantity(mag=0.75, unit="hr"),
-        lead_times=[FamilyLeadTime(family="sawn_lumber", lead_time=Quantity(mag=2.0, unit="week"))],
+        factors=factors,
         uncertainty_pct=4.0,
     )
 

@@ -20,12 +20,15 @@ from conftest import (
 )
 from structural_kernel.decisions import (
     CostBasisParams,
+    CostFactor,
+    DirectPrice,
     ExceptionParams,
+    FactorScope,
     GravityFramingStrategyParams,
     GridLine,
     GridParams,
+    LaborPrice,
     LoadAssumptionsParams,
-    MaterialRate,
     SteelFramingStrategyParams,
     line_refs,
     parse_params,
@@ -97,22 +100,45 @@ def test_cost_basis_has_no_line_refs() -> None:
     assert line_refs(cost_basis_params()) == set()
 
 
-def test_material_rate_must_be_money_per_mass_or_volume() -> None:
-    with pytest.raises(ValidationError, match="money-per-mass"):
-        MaterialRate(family="sawn_lumber", rate=Quantity(mag=2.5, unit="USD"))  # bare money
-    with pytest.raises(ValidationError, match="money-per-mass"):
-        MaterialRate(
-            family="hot_rolled_steel", rate=Quantity(mag=2.5, unit="USD/hr")
-        )  # a rate/time
+def test_cost_factor_over_unknown_quantity_kind_fails_cleanly() -> None:
+    # The clean-failure boundary (note 0003): a factor naming a countable no
+    # resolver provides is rejected, pointing at the missing kind — never invented.
+    with pytest.raises(ValidationError, match="which no derived countable provides"):
+        CostFactor(
+            quantity_kind="formwork_area",
+            pricing=DirectPrice(unit_price=Quantity(mag=1.0, unit="USD")),
+            source="x",
+        )
 
 
-def test_cost_basis_rejects_two_rates_for_one_family() -> None:
-    payload = cost_basis_params().model_dump(mode="json")
-    payload["material_rates"].append(
-        {"family": "sawn_lumber", "rate": {"mag": 3.0, "unit": "USD/BF"}}
-    )
-    with pytest.raises(ValidationError, match="duplicate material rate"):
-        CostBasisParams.model_validate(payload)
+def test_direct_price_dimension_must_match_the_quantity_kind() -> None:
+    # member_weight is a MASS kind: it wants a money-per-mass rate, not $/BF.
+    with pytest.raises(ValidationError, match="unit price"):
+        CostFactor(
+            quantity_kind="member_weight",
+            pricing=DirectPrice(unit_price=Quantity(mag=2.5, unit="USD/BF")),
+            source="x",
+        )
+    # a count kind wants plain USD-each, not a per-mass rate.
+    with pytest.raises(ValidationError, match="unit price"):
+        CostFactor(
+            quantity_kind="crane_picks",
+            pricing=DirectPrice(unit_price=Quantity(mag=2.5, unit="USD/lb")),
+            source="x",
+        )
+
+
+def test_labor_pricing_only_applies_to_a_count_kind() -> None:
+    with pytest.raises(ValidationError, match="labor pricing applies to a count kind"):
+        CostFactor(
+            quantity_kind="member_weight",  # a MASS kind, not a count
+            scope=FactorScope(family="hot_rolled_steel"),
+            pricing=LaborPrice(
+                crew_rate=Quantity(mag=140.0, unit="USD/hr"),
+                productivity=Quantity(mag=0.5, unit="hr"),
+            ),
+            source="x",
+        )
 
 
 def test_cost_basis_uncertainty_must_be_a_sane_percentage() -> None:

@@ -13,6 +13,12 @@ from structural_kernel.constraints import (
     check_project_constraints,
     register_predicate,
 )
+from structural_kernel.costing import (
+    QUANTITY_KINDS,
+    QuantityKind,
+    quantity_kinds,
+    register_quantity_kind,
+)
 from structural_kernel.decisions import DecisionParams, parse_params
 from structural_kernel.derivation import (
     DERIVATION_VERSION,
@@ -81,6 +87,7 @@ __all__ = [
     "DERIVATION_VERSION",
     "ENGINES",
     "PREDICATES",
+    "QUANTITY_KINDS",
     "REGISTRY",
     "AddConstraint",
     "AnalysisModel",
@@ -122,6 +129,7 @@ __all__ = [
     "ProposeResult",
     "Proposer",
     "Quantity",
+    "QuantityKind",
     "Snapshot",
     "SolveFailure",
     "SolveResult",
@@ -150,7 +158,9 @@ __all__ = [
     "parse_params",
     "parse_quantity",
     "propose",
+    "quantity_kinds",
     "register_predicate",
+    "register_quantity_kind",
     "render_eid",
     "run_design_checks",
     "run_exploration",

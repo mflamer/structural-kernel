@@ -1,36 +1,34 @@
-# 0012 — Cost basis as a versioned decision; priced evaluation layered over reused physics
+# 0012 — Cost basis as a versioned decision; priced evaluation as a table of factors over derived countables
 
-**Status:** Accepted (2026-07-08, product owner directed). Implements the vision's
-item 2 ("cost as the ranking variable, honestly modeled") and its standing
-requirements: cost assumptions are decisions; derivation emits countables;
-evaluation is a distinct layer from solving (re-ranking must not re-solve);
-rankings carry their basis and an uncertainty statement. Builds on ADR 0002
-(tagged quantities at every boundary), ADR 0007 (the material-engine registry as
-the quantity source), and the exploration/evaluation split from design doc 0001
-§8 (evaluations keyed by `(result set, cost_basis)`, already in `explorations.py`).
+**Status:** Accepted (2026-07-08, product owner directed), **revised 2026-07-09
+per PO note 0003** — the first cut modelled the basis as named price fields
+(`connection_cost`, `crew_rate`, per-family `material_rates`); note 0003 landed
+just after it was pushed and reframed the basis as a *table of priced factors over
+countables*, which this ADR now records. Implements the vision's item 2 ("cost as
+the ranking variable, honestly modeled") and standing requirements: cost
+assumptions are decisions; derivation emits countables; evaluation is a distinct
+layer from solving (re-ranking must not re-solve); rankings carry their basis and
+an uncertainty statement. Builds on ADR 0002 (tagged quantities), ADR 0004/0007
+(registry-not-enum), and the exploration/evaluation split from design doc 0001 §8.
 
 ## Context
 
 The evaluation layer was already shaped for this: `Evaluation` is keyed by
 `(result_set, cost_basis)`, `evaluate` reads *stored* solve results and never
-solves, and the only metric was `total_member_mass_kg`. What was missing was the
-cost model itself — and the charter's hard rules constrain how it may be built:
-no bare float crosses an interface, and no price may be hardcoded or live inside a
-derivation rule. Cost had to enter as unit-tagged money on a committed decision,
-consumed by the evaluation layer, with physics untouched.
+solves. What was missing was the cost model — and note 0003 fixed its shape before
+it could calcify. The vision names specific things ("$/lb erected steel", "crew
+rates", "crane picks", "14-week lead time"); a schema of named fields for each
+would need a schema change for the next driver (formwork, a carbon price, a
+regional multiplier) — the IFC failure mode again. The general class of which
+"erected steel $/lb" is one instance is **a priced factor over a countable the
+derivation emits**. So the basis is a *list of factors*, not named columns — the
+same registry move ADR 0004 made for intent categories and ADR 0007 for material
+engines.
 
-Four domain calls (Mark, a licensed PE) fixed the model:
-
-1. **Material rate per family** — steel priced by weight (`$/lb`), sawn lumber by
-   *nominal* board-feet (`$/BF`), the two units the trades actually quote.
-2. **Installation model** — `connection_count × conn_cost` plus erection hours
-   costed at a crew rate, where `erection_hours = piece_count × hrs/piece +
-   crane_picks × hrs/pick`. Installation is *not* a fraction of material — that
-   divergence is the whole point of item 2.
-3. **Crane picks** — one pick per primary steel member; hand-set lumber picks
-   zero. A phase-2 family-level simplification (glulam-vs-sawn refinement later).
-4. **Uncertainty band** — a fixed percentage committed on the basis (default 4%,
-   the vision's "a 4% spread is a coin flip"), never hardcoded.
+The charter's hard rules still bind: no bare float crosses the cost interface, and
+no price is hardcoded or lives inside a derivation rule. And note 0003's one
+boundary: **derivation emits quantities; the basis prices them; pricing never
+invents a quantity** — which is exactly what makes re-rank-without-re-solve hold.
 
 ## Decision
 
@@ -39,77 +37,89 @@ Four domain calls (Mark, a licensed PE) fixed the model:
   nominal cubic inches), and the rate dimensions `MONEY_PER_MASS` (`USD/kg`,
   `USD/lb`), `MONEY_PER_VOLUME` (`USD/m3`, `USD/BF`, `USD/MBF`), `MONEY_PER_TIME`
   (`USD/s`, `USD/hr`), plus `hr`/`week` for TIME. Single currency (USD) in phase
-  2. Every spelling is NIST-anchored and tested, the same posture as `LINE_LOAD`
-  and `MOMENT`. **A rate's *dimension* is the switch** that selects the priced
-  quantity — a `USD/lb` rate prices mass, a `USD/BF` rate prices nominal volume —
-  so nothing anywhere says "steel is priced by weight"; the unit tag carries it.
+  2, NIST-anchored and tested, the same posture as `LINE_LOAD` / `MOMENT`.
 
-- **`cost_basis` is a decision kind** (`objects.py`, `decisions.py`).
-  `CostBasisParams` carries: `material_rates` (one unit-tagged rate per family,
-  validated money-per-mass-or-volume), `connection_cost`, `crew_rate`,
-  `hours_per_piece`, `hours_per_pick`, `lead_times` (per family, in weeks),
-  `region`, `as_of`, and `uncertainty_pct`. It **derives no geometry** — the
-  `derive` rules ignore it — so it is pure data the evaluation layer reads; the
-  only wiring is `parse_params` + `line_refs` (empty; it is global). A revised
-  basis (the fabricator's re-quote) is a *new* `cost_basis` decision, so every
-  ranking cites exactly what it was priced under.
+- **Quantity kinds are an open registry** (`costing.py`), the ADR 0004/0007 move
+  applied to cost. `register_quantity_kind(QuantityKind(name, dimension, resolve))`
+  is the whole extension surface; a resolver reads a derived model + optional
+  `(family, role)` scope and returns the aggregate's canonical-SI magnitude.
+  Built-ins read what derivation already emits: `member_weight` (MASS),
+  `board_feet` (VOLUME, lumber's nominal board-foot volume), `piece_count`,
+  `connection_count`, `crane_picks` (dimensionless counts). A kind's `dimension`
+  is what a factor's price unit is validated against.
 
-- **Derivation emits the installation countables** (`derivation.py`). `crane_picks`
-  is now populated — `sum(engine.crane_picks_per_member())` over catalog members —
-  joining the piece and connection counts already in the bill. Two family facts
-  land on the `MaterialEngine` registry (ADR 0007), alongside `section_properties`
-  and `mass_density`: `crane_picks_per_member()` (steel 1, wood 0) and
-  `nominal_volume_m3()` (lumber's board-foot volume from the designation; steel,
-  priced by weight, returns `None`). Counts are geometry; productivities and rates
-  are the *basis's*, so nothing about erection method is baked into physics.
+- **`cost_basis` is a decision whose params are a factor table**
+  (`objects.py`, `decisions.py`). `CostBasisParams` = `region`, `as_of`,
+  `factors: list[CostFactor]`, `uncertainty_pct`. A `CostFactor` is
+  `(quantity_kind, scope?, pricing, source)`, where `pricing` is a discriminated
+  union: `DirectPrice(unit_price)` (summed; the rate's dimension must match the
+  kind — MASS→`USD/kg`, VOLUME→`USD/m3`, count→`USD`), `LaborPrice(crew_rate,
+  productivity)` (summed; `count × productivity × crew_rate` — **crew rate and
+  productivity stay explicit basis data, Mark's call**; productivity is a
+  means-and-methods assumption on the *basis*, never in derivation), and
+  `FlagAnnotation(note_value)` (never summed — the vision's lead-time flag).
+  "$/lb steel" and "$/bf wood" are two factor rows, not two fields. The kind is
+  derived-data, not geometry, so `cost_basis` derives nothing — the only wiring is
+  `parse_params` + `line_refs` (empty; it is global). A revised basis is a *new*
+  `cost_basis` decision, so every ranking cites what it was priced under.
 
-- **Priced evaluation is layered over stored results** (`explorations.py`).
-  `evaluate(store, exploration, cost_basis)` computes, per candidate,
-  `material_cost_usd` (family rate × the quantity its dimension selects) +
-  `installation_cost_usd` (the countable model above) = `installed_cost_usd`, all
-  in canonical USD, added to `metrics` beside mass and unity. `run_exploration`
-  threads the basis; an `installed_cost_usd` objective ranks the heterogeneous
-  wood-vs-steel slate by installed cost through the ordinary `_rank`. Lead times
-  become per-candidate `flags` that annotate but never price in; the ranking's
-  notes cite the basis and state whether the top comparison is "inside the noise"
-  (`uncertainty_note`, a pure function of the ranked costs and the band).
+- **The clean-failure boundary is enforced at validation.** A factor naming a
+  `quantity_kind` no resolver provides is a rejected changeset naming the missing
+  countable — never invented. A `DirectPrice` whose unit dimension disagrees with
+  the kind, or `LaborPrice` over a non-count kind, is likewise rejected at schema
+  time.
 
-- **Re-ranking cannot re-solve, by construction.** `evaluate` takes no engine —
-  it structurally cannot solve. Re-pricing under a revised basis is the same call
-  with a different `cost_basis` decision: it re-derives (pure, cheap) to read
-  quantities and countables, reuses each candidate's stored `SolveResult` for the
-  design checks, and appends an `Evaluation` over the *same* `result_set`. The
-  vision's "erected steel up 20% — re-ranking, no re-solving needed" is a test:
-  only steel's material cost moves, wood's installed cost is byte-identical, and
-  every stored solve result is reused verbatim.
+- **Derivation emits the countables** (`derivation.py`). `crane_picks` is now
+  populated (`sum(engine.crane_picks_per_member())` over catalog members) beside
+  the piece and connection counts. Two family facts land on the ADR 0007 material
+  engines: `crane_picks_per_member()` (steel 1, wood 0) and `nominal_volume_m3()`
+  (lumber board-foot volume; steel, priced by weight, returns `None`). Counts are
+  geometry; productivities and prices are the *basis's*.
+
+- **Priced evaluation sums factors over stored results** (`explorations.py`).
+  `evaluate(store, exploration, cost_basis)` prices each candidate by summing its
+  basis's factors over the (re-derived, pure) model: `material_cost_usd` (factors
+  whose kind is MASS/VOLUME) + `installation_cost_usd` (counts + labor) =
+  `installed_cost_usd`, the ranking metric. `flag` factors become per-candidate
+  annotations; the notes cite the basis and state whether the top comparison is
+  "inside the noise" (`uncertainty_note`, a pure function of the ranked costs and
+  the band). Material-only vs installed is one schema differing only in which
+  factors are present.
+
+- **Re-ranking cannot re-solve, by construction.** `evaluate` takes no engine.
+  Re-pricing under a revised basis re-derives (pure, cheap) to read countables,
+  reuses each candidate's stored `SolveResult`, and appends an `Evaluation` over
+  the *same* `result_set`. Because a factor only *prices* a derived quantity, a
+  re-quote changes factors, never physics.
 
 ## Consequences
 
-- **Cost is a first-class metric, physics is untouched.** Wood's byte-identical
-  mass path proves the addition is purely additive; the existing physics-only
-  (null-basis) evaluation still runs during the mass-ranked sweeps.
+- **The generalization is a real test.** A carbon price over a `co2e` quantity
+  kind — registered only as a test fixture — prices and re-ranks the stored
+  exploration with **zero kernel change** (mirrors ADR 0011's `clear_height_below`
+  proof); a factor over an unregistered kind fails cleanly; material-only and
+  installed bases re-rank over the same physics with no solve; the vision's steel
+  +20% re-quote moves only steel's material cost.
 
-- **The rate-dimension-as-switch keeps the model honest.** Pricing wood by weight
-  or steel by volume is a schema decision the PO makes by choosing a unit, not a
-  code change; a misconfigured basis (a volume rate for a family with no volume
-  basis) is recorded as a note and omitted, never a fabricated price.
+- **Cost is a first-class metric, physics untouched.** Wood's byte-identical mass
+  path proves the addition is purely additive; the null-basis (mass-only)
+  evaluation still runs the mass-ranked sweeps.
 
-- CI stays deterministic and secret-free (the reference engine solves; no LLM,
-  no live prices). All gates green (pyright strict, ruff, full pytest).
+- CI stays deterministic and secret-free (reference engine solves; no LLM, no live
+  prices). All gates green (pyright strict, ruff, full pytest).
 
-- **The seeded regional default is an illustrative placeholder.** The numbers in
-  the test basis (`$/lb`, `$/BF`, crew rate, productivities) await PO
-  verification, flagged like the dressed-size table — the *mechanism* is what
-  ships, not the prices.
+- **The seeded regional basis is an illustrative placeholder.** The factor numbers
+  (`$/lb`, `$/BF`, crew rate, productivities, uncertainty %) await PO verification,
+  flagged like the dressed-size table — the *primitive* ships, not the prices.
 
-- **Deferred:** `cost_basis` as a *project constraint* (the vision's cost-budget
-  constraint, its own standing requirement); `cost_basis`-keyed evaluation as a
-  first-class object separate from the exploration's evaluation list; glulam and
-  other families (so lead time bites — sawn lumber stands in for the 14-week
-  glulam flag today); erection method as a richer basis/decision concern than a
-  family fact (a craned timber, a bundled joist pick); staged detail-derivation of
-  connections/bolts so connection counts come from real connection geometry rather
-  than load-path edges; multi-currency.
+- **Deferred:** a real derived `co2e` countable (material carbon intensity as an
+  engine fact) so carbon is production, not a fixture; lead time as a genuine
+  derived countable rather than a family-presence flag (lead time is regional
+  market data, so it currently rides as a `FlagAnnotation` over the family's
+  presence); `cost_basis` as a cost-*budget* project constraint; glulam and other
+  families; erection method richer than a family fact; detail-derived connection
+  geometry; multi-currency.
 
-Supersedes nothing. Establishes cost as a committed, versioned assumption and
-priced evaluation as a re-rankable layer strictly above reused physics.
+Supersedes nothing. Establishes cost as a committed, versioned assumption modelled
+as a table of priced factors over derived countables, and priced evaluation as a
+re-rankable layer strictly above reused physics.
