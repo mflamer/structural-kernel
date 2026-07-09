@@ -1,0 +1,12 @@
+{
+  "grids": [
+    {"tag": "GA", "name": "A", "axis": "x", "offset": {"mag": 0.0, "unit": "ft"}},
+    {"tag": "GB", "name": "B", "axis": "x", "offset": {"mag": 40.0, "unit": "ft"}},
+    {"tag": "G1", "name": "1", "axis": "y", "offset": {"mag": 0.0, "unit": "ft"}},
+    {"tag": "G2", "name": "2", "axis": "y", "offset": {"mag": 30.0, "unit": "ft"}}
+  ],
+  "storeys": [
+    {"tag": "S1", "name": "Level 1", "elevation": {"mag": 0.0, "unit": "ft"}},
+    {"tag": "S2", "name": "Roof", "elevation": {"mag": 8.0, "unit": "ft"}}
+  ]
+}

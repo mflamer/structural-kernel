@@ -22,6 +22,7 @@ from structural_kernel.objects import (
     AddConstraint,
     AddDecision,
     AddOverride,
+    AddReferencedGeometry,
     Changeset,
     Decision,
     DecisionTarget,
@@ -34,6 +35,8 @@ from structural_kernel.objects import (
     ProjectConstraint,
     RatificationRecord,
     RatifyConstraint,
+    ReferencedGeometry,
+    ReissueReferencedGeometry,
     RemoveConstraint,
     RemoveDecision,
     RemoveOverride,
@@ -49,6 +52,10 @@ IssueCode = Literal[
     "duplicate_constraint",
     "unknown_constraint",
     "constraint_not_ratifiable",
+    "duplicate_referenced_geometry",
+    "unknown_referenced_geometry",
+    "stale_referenced_version",
+    "referenced_reissue",
     "missing_dep",
     "dependency_cycle",
     "unknown_line_ref",
@@ -91,6 +98,9 @@ class ResolvedSnapshot:
 
     decisions: dict[str, Decision] = field(default_factory=dict[str, Decision])
     constraints: dict[str, ProjectConstraint] = field(default_factory=dict[str, ProjectConstraint])
+    referenced_geometry: dict[str, ReferencedGeometry] = field(
+        default_factory=dict[str, ReferencedGeometry]
+    )
     overrides: OverrideSet = field(default_factory=OverrideSet)
 
 
@@ -248,6 +258,7 @@ def apply_changeset(
     issues: list[ValidationIssue] = []
     decisions = dict(base.decisions)
     constraints = dict(base.constraints)
+    referenced = dict(base.referenced_geometry)
     overrides: dict[tuple[str, str], Override] = {
         (o.target.eid, o.target.field): o for o in base.overrides.overrides
     }
@@ -367,6 +378,42 @@ def apply_changeset(
                     )
                 else:
                     constraints[op.cid] = _ratify(existing, op)
+            case AddReferencedGeometry():
+                ref_id = op.geometry.ref_id
+                if ref_id in referenced:
+                    issues.append(
+                        _error(
+                            "duplicate_referenced_geometry",
+                            f"referenced geometry {ref_id} already imported; re-issue instead",
+                            ref_id=ref_id,
+                        )
+                    )
+                else:
+                    referenced[ref_id] = op.geometry
+            case ReissueReferencedGeometry():
+                ref_id = op.geometry.ref_id
+                current = referenced.get(ref_id)
+                if current is None:
+                    issues.append(
+                        _error(
+                            "unknown_referenced_geometry",
+                            f"cannot re-issue unknown referenced geometry {ref_id}; add it first",
+                            ref_id=ref_id,
+                        )
+                    )
+                elif op.geometry.version <= current.version:
+                    issues.append(
+                        _error(
+                            "stale_referenced_version",
+                            f"re-issue of {ref_id} must have a higher version than "
+                            f"v{current.version}; got v{op.geometry.version}",
+                            ref_id=ref_id,
+                            current_version=current.version,
+                            new_version=op.geometry.version,
+                        )
+                    )
+                else:
+                    referenced[ref_id] = op.geometry
 
     if issues:
         return None, issues
@@ -374,6 +421,7 @@ def apply_changeset(
         ResolvedSnapshot(
             decisions=decisions,
             constraints=constraints,
+            referenced_geometry=referenced,
             overrides=OverrideSet(overrides=list(overrides.values())),
         ),
         [],
@@ -469,11 +517,12 @@ def check_referential(result: ResolvedSnapshot) -> list[ValidationIssue]:
 
 def resolved_snapshot_hash(result: ResolvedSnapshot) -> str:
     """The content address of the derivation inputs — decisions and overrides,
-    the only things derivation consumes. Project constraints (ADR 0011) are
-    deliberately excluded: they bind validation, not geometry, so two snapshots
-    differing only in constraints share a derived model and must share this hash
-    (the derivation cache key). Computable before anything is written, so the
-    dry-run's provenance matches the eventual commit's geometry exactly."""
+    the only things derivation consumes. Project constraints (ADR 0011) and
+    referenced geometry (ADR 0013) are deliberately excluded: they bind validation
+    and anchor constraints, not geometry, so two snapshots differing only in those
+    share a derived model and must share this hash (the derivation cache key).
+    Computable before anything is written, so the dry-run's provenance matches the
+    eventual commit's geometry exactly."""
     snapshot = Snapshot(
         decisions={
             did: content_hash(model_document(decision))

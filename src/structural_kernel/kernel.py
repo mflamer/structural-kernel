@@ -29,9 +29,11 @@ from structural_kernel.objects import (
     KernelModel,
     OverrideSet,
     ProjectConstraint,
+    ReferencedGeometry,
     Snapshot,
     Timestamp,
 )
+from structural_kernel.referenced import reconfirmations
 from structural_kernel.store import StaleBaseError
 from structural_kernel.validation import (
     ResolvedSnapshot,
@@ -200,6 +202,26 @@ def propose(
         for w in inert
     ]
 
+    # A re-issued referenced model surfaces every constraint whose anchor moved or
+    # was removed (ADR 0013) — the "re-confirm this reading" signal, never a
+    # rejection: a moved anchor still binds at its new position, so the intent is
+    # never silently dropped when the architect changes the model.
+    warnings += [
+        ValidationIssue(
+            code="referenced_reissue",
+            severity="warning",
+            message=w.message,
+            detail={
+                "cid": w.cid,
+                "ref_id": w.ref_id,
+                "anchor_grid": w.anchor_grid,
+                "change": w.change,
+                **w.detail,
+            },
+        )
+        for w in reconfirmations(base, result)
+    ]
+
     return _commit(store, changeset, result, author, message, timestamp, ref, current, warnings)
 
 
@@ -257,12 +279,21 @@ def load_snapshot(store: FileStore, commit_hash: str | None) -> ResolvedSnapshot
         cid: store.get_model(constraint_hash, ProjectConstraint)
         for cid, constraint_hash in snapshot.constraints.items()
     }
+    referenced_geometry = {
+        ref_id: store.get_model(geometry_hash, ReferencedGeometry)
+        for ref_id, geometry_hash in snapshot.referenced_geometry.items()
+    }
     overrides = (
         store.get_model(snapshot.override_set, OverrideSet)
         if snapshot.override_set is not None
         else OverrideSet()
     )
-    return ResolvedSnapshot(decisions=decisions, constraints=constraints, overrides=overrides)
+    return ResolvedSnapshot(
+        decisions=decisions,
+        constraints=constraints,
+        referenced_geometry=referenced_geometry,
+        overrides=overrides,
+    )
 
 
 def _commit(
@@ -284,6 +315,10 @@ def _commit(
         constraints={
             cid: store.put_model(constraint)
             for cid, constraint in sorted(result.constraints.items())
+        },
+        referenced_geometry={
+            ref_id: store.put_model(geometry)
+            for ref_id, geometry in sorted(result.referenced_geometry.items())
         },
         override_set=(store.put_model(result.overrides) if result.overrides.overrides else None),
     )

@@ -177,6 +177,69 @@ class OverrideSet(KernelModel):
     overrides: list[Override] = Field(default_factory=list[Override])
 
 
+# -- referenced geometry (design doc 0005 §3; ADR 0013) -----------------------
+#
+# The architect's geometry as *read-only external context* structural constraints
+# anchor to — never a `Decision`. Content-addressed and versioned: a re-issued
+# model lands a new version at the same `ref_id` lineage, and the displaced/
+# dangling machinery (ADR 0005) surfaces affected constraints. Light-typed for the
+# entities IFC gives cleanly (grids, storeys); everything about *how* it was read
+# stays behind the importer adapter — no IFC/DWG/vision type crosses into here.
+
+
+class ExternalProvenance(KernelModel):
+    """Where a referenced-geometry version came from — the parallel to a surveyed
+    override's `measured` provenance. Stamps the source file, its content hash,
+    the importer that read it, and when."""
+
+    source_file: Annotated[str, StringConstraints(min_length=1)]
+    file_hash: Annotated[str, StringConstraints(min_length=1)]  # sha256 hex of the source bytes
+    importer: Annotated[str, StringConstraints(min_length=1)]  # importer name + version
+    imported_at: IsoDate
+
+
+class ReferencedGrid(KernelModel):
+    """A grid line read from the architect's model (an IfcGridAxis): a stable id
+    from the source, a display name, the axis it holds constant, and its offset in
+    canonical units. The kernel vocabulary — the IFC entity does not cross over."""
+
+    grid_id: Annotated[str, StringConstraints(min_length=1)]
+    name: Annotated[str, StringConstraints(min_length=1)]
+    axis: Literal["x", "y"]
+    offset: LengthQuantity
+
+
+class ReferencedLevel(KernelModel):
+    """A storey read from the architect's model (an IfcBuildingStorey)."""
+
+    level_id: Annotated[str, StringConstraints(min_length=1)]
+    name: Annotated[str, StringConstraints(min_length=1)]
+    elevation: LengthQuantity
+
+
+class ReferencedGeometry(KernelModel):
+    """A read-only, versioned import of external architectural geometry. `ref_id`
+    is the stable lineage (constant across re-issues); `version` bumps on re-issue.
+    Never consumed by derivation — only referenced by a `ReferencedRegion`."""
+
+    schema_version: Literal[1] = 1
+    ref_id: Did
+    version: int = Field(ge=1)
+    provenance: ExternalProvenance
+    grids: list[ReferencedGrid] = Field(default_factory=list[ReferencedGrid])
+    levels: list[ReferencedLevel] = Field(default_factory=list[ReferencedLevel])
+
+    @model_validator(mode="after")
+    def _ids_unique(self) -> ReferencedGeometry:
+        for label, ids in (
+            ("grid", [g.grid_id for g in self.grids]),
+            ("level", [lv.level_id for lv in self.levels]),
+        ):
+            if len(ids) != len(set(ids)):
+                raise ValueError(f"referenced geometry {self.ref_id}: duplicate {label} ids")
+        return self
+
+
 # -- spatial structural constraints (ADR 0011; PO note 0002) ------------------
 #
 # A *project-level* constraint: a typed predicate over a spatially-anchored
@@ -223,9 +286,26 @@ class WholePlan(KernelModel):
     kind: Literal["whole_plan"] = "whole_plan"
 
 
-# Extensible by construction: a referenced-geometry region (ADR 0005 external,
-# design doc 0005 ingestion) is a future variant, no predicate need change.
-Region = Annotated[OffsetBand | GridBoundedRegion | WholePlan, Field(discriminator="kind")]
+class ReferencedRegion(KernelModel):
+    """A band measured off a grid line in *referenced geometry* (design doc 0005
+    §3) — the outside-world analog of `OffsetBand`. Anchors by (referenced-geometry
+    lineage, grid id), never coordinates, so it tracks the architect's grid when a
+    re-issue moves it; a re-issue that moves or removes the anchor surfaces the
+    constraint for re-confirmation (ADR 0005 displaced/dangling)."""
+
+    kind: Literal["referenced_region"] = "referenced_region"
+    ref_id: Did  # the ReferencedGeometry lineage this reads from
+    anchor_grid: Annotated[str, StringConstraints(min_length=1)]  # a grid_id within it
+    extent: LengthQuantity
+    side: Literal["greater", "less"]
+
+
+# A referenced-geometry region (design doc 0005) joins the ADR 0005 anchor
+# vocabulary as one more variant — no predicate need change.
+Region = Annotated[
+    OffsetBand | GridBoundedRegion | WholePlan | ReferencedRegion,
+    Field(discriminator="kind"),
+]
 
 
 # The provenance taxonomy (design doc 0005 §5, ADR 0013). A constraint is either
@@ -363,6 +443,23 @@ class RatifyConstraint(KernelModel):
     edited: ProjectConstraint | None = None
 
 
+class AddReferencedGeometry(KernelModel):
+    """Import a new referenced-geometry lineage (design doc 0005 §3). The
+    ``ref_id`` must be new; ``version`` is the initial version (1)."""
+
+    op: Literal["add_referenced_geometry"] = "add_referenced_geometry"
+    geometry: ReferencedGeometry
+
+
+class ReissueReferencedGeometry(KernelModel):
+    """Land a re-issued architectural model at an existing lineage: same
+    ``ref_id``, a strictly higher ``version`` (design doc 0005 §3). The commit
+    diffs old vs new and surfaces affected constraints for re-confirmation."""
+
+    op: Literal["reissue_referenced_geometry"] = "reissue_referenced_geometry"
+    geometry: ReferencedGeometry
+
+
 ChangesetOp = Annotated[
     AddDecision
     | ModifyDecision
@@ -371,7 +468,9 @@ ChangesetOp = Annotated[
     | RemoveOverride
     | AddConstraint
     | RemoveConstraint
-    | RatifyConstraint,
+    | RatifyConstraint
+    | AddReferencedGeometry
+    | ReissueReferencedGeometry,
     Field(discriminator="op"),
 ]
 
@@ -390,11 +489,13 @@ class Changeset(KernelModel):
 class Snapshot(KernelModel):
     """The complete canonical model at an instant: did → decision hash, plus the
     standing project constraints (cid → constraint hash) that bind every future
-    changeset and exploration candidate."""
+    changeset and exploration candidate, and the referenced geometry (ref_id →
+    referenced-geometry hash) constraints may anchor to."""
 
     schema_version: Literal[1] = 1
     decisions: dict[Did, ObjectHash] = Field(default_factory=dict)
     constraints: dict[Cid, ObjectHash] = Field(default_factory=dict)
+    referenced_geometry: dict[Did, ObjectHash] = Field(default_factory=dict)
     override_set: ObjectHash | None = None
 
 

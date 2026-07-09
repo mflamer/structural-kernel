@@ -42,6 +42,8 @@ from structural_kernel.objects import (
     KernelModel,
     OffsetBand,
     ProjectConstraint,
+    ReferencedGeometry,
+    ReferencedRegion,
     Region,
     WholePlan,
 )
@@ -146,9 +148,27 @@ class ResolvedRegion:
         }
 
 
-def resolve_region(region: Region, lines: dict[str, tuple[str, float]]) -> ResolvedRegion | None:
+def _band(axis: str, offset: float, extent: float, side: str) -> ResolvedRegion:
+    """An offset band off an anchor line — the shared geometry of ``OffsetBand``
+    (decision grids) and ``ReferencedRegion`` (referenced grids)."""
+    lo, hi = (offset - extent, offset) if side == "less" else (offset, offset + extent)
+    band = (min(lo, hi), max(lo, hi))
+    return (
+        ResolvedRegion(x_bounds=band, y_bounds=None)
+        if axis == "x"
+        else ResolvedRegion(x_bounds=None, y_bounds=band)
+    )
+
+
+def resolve_region(
+    region: Region,
+    lines: dict[str, tuple[str, float]],
+    refs: dict[str, ReferencedGeometry],
+) -> ResolvedRegion | None:
     """Resolve a region's ADR 0005 anchors to SI plan intervals. ``None`` when an
-    anchor line does not resolve — the caller treats that as an inert constraint."""
+    anchor line does not resolve — the caller treats that as an inert constraint.
+    Decision-grid anchors resolve against ``lines``; referenced-geometry anchors
+    resolve against ``refs``."""
     if isinstance(region, WholePlan):
         return ResolvedRegion(x_bounds=None, y_bounds=None)
     if isinstance(region, OffsetBand):
@@ -156,14 +176,15 @@ def resolve_region(region: Region, lines: dict[str, tuple[str, float]]) -> Resol
         if anchor is None:
             return None
         axis, offset = anchor
-        extent = region.extent.si_mag
-        lo, hi = (offset - extent, offset) if region.side == "less" else (offset, offset + extent)
-        band = (min(lo, hi), max(lo, hi))
-        return (
-            ResolvedRegion(x_bounds=band, y_bounds=None)
-            if axis == "x"
-            else ResolvedRegion(x_bounds=None, y_bounds=band)
-        )
+        return _band(axis, offset, region.extent.si_mag, region.side)
+    if isinstance(region, ReferencedRegion):
+        geometry = refs.get(region.ref_id)
+        if geometry is None:
+            return None  # the referenced model is gone — inert (dangling)
+        grid = next((g for g in geometry.grids if g.grid_id == region.anchor_grid), None)
+        if grid is None:
+            return None  # the anchor grid was removed on re-issue — inert (dangling)
+        return _band(grid.axis, grid.offset.si_mag, region.extent.si_mag, region.side)
     # The union is exhausted: region is a GridBoundedRegion.
     try:
         x0 = lines[region.x_from][1]
@@ -337,6 +358,7 @@ def check_project_constraints(
     Returns (violations to reject on, inert-constraint warnings to attach). Pure
     and deterministic — a function of exactly (derived model, snapshot)."""
     lines = _grid_lines(snapshot)
+    refs = snapshot.referenced_geometry
     violations: list[ConstraintViolation] = []
     warnings: list[ConstraintWarning] = []
 
@@ -374,7 +396,7 @@ def check_project_constraints(
             continue
         if registration.check_site != "commit":
             continue  # solve-site predicates enforce in the design-check stage (reserved)
-        region = resolve_region(constraint.region, lines)
+        region = resolve_region(constraint.region, lines, refs)
         if region is None:
             warnings.append(
                 ConstraintWarning(
