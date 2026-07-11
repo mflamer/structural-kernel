@@ -233,6 +233,43 @@ Push back when the engineering says otherwise.
   complete and landed on main — all gates green (215 passed, 1 skipped; pyright
   strict clean; ruff clean), CI green on both engines (Linux/xara, Windows/
   reference).** All five note-0004 acceptance signals proven by tests.
+- **Phase-2 sprint 7 done (2026-07-10, PO-directed): ADR 0014 — concrete framing
+  (cash the check ADR 0007 wrote), steered by note 0006.** Cast-in-place concrete
+  registers as the third material family, and the ADR 0007 boundary is confirmed
+  under a real decision kind — with **one honest finding, surfaced as the note
+  demanded**: reinforcement (the member fact a designation cannot carry) could
+  not ride the catalog-shaped check requests; `FlexureRequest`/`AxialRequest`
+  gained one additive, family-neutral optional `reinforcement` field that catalog
+  engines ignore. **`MemberCheckData`, the registry protocol methods, and check
+  consumption are untouched.** The representational answer (PO calls throughout):
+  a concrete member is *described, not selected* — `ConcreteMemberSpec` = b×h
+  tagged lengths + structured reinforcement (count × bar "#8", cover to the
+  tension-steel centroid so d = depth − cover, optional two-leg stirrups,
+  ties/spirals), **single-pass authored-and-checked staging** (sizing-to-demand
+  is the deferred staged-derivation lift). The dimensioned "catalog": a parseable
+  designation ("304.8x609.6" mm via `section_designation()`) serves gross
+  A/Ig, Ec-from-mix ("4000psi", ACI 19.2.2.1), density 2400, and placed volume
+  through the unchanged protocol — so the mass metric, analysis artifact
+  (gross-Ig uncracked idealization, Ie deferred), and member-weight costing work
+  with zero site changes. `_derive_concrete_framing` rides the same
+  `_FramingVocab` three-tier rule (bm/gdr/col, ACI/LRFD); `Element` gained
+  optional `ElementReinforcement`. Checks via aciconcrete behind the adapter:
+  beam flexure + shear, column concentric φPn,max (22.4.2 — parity with the
+  axial-only idealization; interaction when column moments exist). Family facts:
+  0 crane picks (formed, not picked), formwork 3 sides beams/girders, 4 columns.
+  Countables: `concrete_volume` (VOLUME, $/CY — units grew CY/USD/CY),
+  `formwork_area` (AREA — new MONEY_PER_AREA + USD/ft2; prices as installation
+  by dimension), `rebar_mass` (MASS; longitudinal bars, stirrup runs deferred) —
+  appended factor rows, `CostFactor` schema untouched; one regional basis prices
+  all three families (concrete rows resolve to zero on wood/steel models).
+  Acceptance proven by tests: ACI checks through the ordinary engine-by-family
+  path; a concrete column violates clear-span **by role**; wood-vs-steel-vs-
+  concrete exploration on the mass metric with no new mechanism; formwork-only
+  re-rank moves only concrete over the same stored results, no solve. (The old
+  unknown-countable test example was literally `formwork_area` — note 0003's
+  prediction cashed.) **Sprint complete and landed on main — all gates green
+  (233 passed, 1 skipped; pyright strict clean; ruff clean), CI green on both
+  engines.**
 - **Deferred (phase-2 continues):** richer multimodal reading (real sheet/raster/
   DWG understanding, sketches, conversation-as-referenced-source — design doc 0005
   §6–7); inferred *intent* over elements (this sprint infers constraints only); a
@@ -242,16 +279,23 @@ Push back when the engineering says otherwise.
   predicates; governing-member feedback (name the check, not just max_unity) and
   loop-until-dry diversity for the refinement loop; steel headers (openings don't
   yet induce over steel); interior/multi-bay columns; true LTB with a real Lb;
-  HSS/A500 columns; lateral analysis; concrete framing kind; a cost-budget *project
+  HSS/A500 columns; lateral analysis; a cost-budget *project
   constraint* and glulam/other families (so lead time bites); erection method as
-  more than a family fact; detail-derived connection counts.
+  more than a family fact; detail-derived connection counts; and the concrete
+  follow-ons ADR 0014 names — reinforcement sized to demand (staged derivation),
+  detailing (development/hooks/bar spacing/stirrup-run takeoff), P-M interaction +
+  slenderness once column moments exist, cracked (Ie) deflection, concrete headers,
+  prestressed/PT/two-way/concrete lateral.
 - Domain items awaiting PO check (flagged, not blocking): sawn-lumber dressed-size
   table and DF-L No.2 reference E in `src/structural_kernel/sections.py`;
   `member_grade` as a framing param; header bearing 3 in each side, section =
   beam_section; gravity-slice ASD combo subset in `derivation._asd_combos`; the
-  seeded regional cost basis numbers (`$/lb`, `$/BF`, crew rate, erection
-  productivities, uncertainty %) in `tests/conftest.cost_basis_params` — an
-  illustrative placeholder, the ADR 0012 mechanism is what ships, not the prices.
+  seeded regional cost basis numbers (`$/lb`, `$/BF`, `$/CY`, `$/ft2` formwork,
+  rebar `$/lb`, crew rate, erection productivities, uncertainty %) in
+  `tests/conftest.cost_basis_params` — an illustrative placeholder, the ADR
+  0012/0014 mechanism is what ships, not the prices; the illustrative concrete
+  member sizes/bars in `tests/conftest.concrete_framing_params`; RC density
+  2400 kg/m³ and the 3-side/4-side forming rule (ADR 0014).
 - ADR 0011 domain calls, both PO-confirmed 2026-07-08: clear-span is the *open*
   band (a support exactly on a bounding line is allowed, so the perimeter and the
   far span-line can carry the span); min-bay counts bearing walls as bay lines
