@@ -4,6 +4,8 @@ from pydantic import JsonValue
 
 from structural_kernel.decisions import (
     AreaLoad,
+    ConcreteFramingStrategyParams,
+    ConcreteMemberSpec,
     CostBasisParams,
     CostFactor,
     DirectPrice,
@@ -114,6 +116,48 @@ def steel_framing_params() -> SteelFramingStrategyParams:
         beam_section="W10x12",
         girder_section="W12x16",
         column_section="W8x24",
+    )
+
+
+def concrete_framing_params() -> ConcreteFramingStrategyParams:
+    """A three-tier CIP concrete frame over the same region as the wood/steel
+    framings (ADR 0014) — beams span y at 6 ft on girders on lines A/B, columns
+    at the corners. Members are *described* (b, h, structured reinforcement),
+    not catalog picks; the sizes and bars are illustrative placeholders awaiting
+    PO check, like the other seeded numbers — the mechanism is what ships."""
+    return ConcreteFramingStrategyParams(
+        region=GridRegion(x_from=LX1, x_to=LX2, y_from=LY_A, y_to=LY_B),
+        system="beams_on_girders_on_columns",
+        beam_axis="y",
+        beam_spacing=ft(6.0),
+        member_family="cast_in_place_concrete",
+        concrete_mix="4000psi",
+        rebar_grade="Gr60",
+        beam=ConcreteMemberSpec(
+            breadth=inches(12.0),
+            depth=inches(16.0),
+            bars=3,
+            bar="#6",
+            cover=inches(2.5),
+            stirrup_bar="#3",
+            stirrup_spacing=inches(7.0),
+        ),
+        girder=ConcreteMemberSpec(
+            breadth=inches(12.0),
+            depth=inches(24.0),
+            bars=3,
+            bar="#8",
+            cover=inches(2.5),
+            stirrup_bar="#3",
+            stirrup_spacing=inches(10.0),
+        ),
+        column=ConcreteMemberSpec(
+            breadth=inches(12.0),
+            depth=inches(12.0),
+            bars=4,
+            bar="#8",
+            cover=inches(2.5),
+        ),
     )
 
 

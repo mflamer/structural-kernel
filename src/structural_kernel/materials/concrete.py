@@ -49,6 +49,7 @@ _PA_PER_PSI = UNITS["psi"].si_factor
 
 # Normalweight reinforced concrete, ~150 pcf — the standard takeoff density.
 _CONCRETE_DENSITY_KG_M3 = 2400.0
+_REBAR_DENSITY_KG_M3 = 7850.0  # reinforcing steel
 
 _DESIGNATION = re.compile(r"^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$")
 _MIX = re.compile(r"^(\d+(?:\.\d+)?)psi$")
@@ -68,6 +69,16 @@ def _parse_designation(designation: str) -> tuple[float, float] | None:
     if match is None:
         return None
     return float(match.group(1)) / 1000.0, float(match.group(2)) / 1000.0
+
+
+def longitudinal_steel_mass_kg(bars: int, bar: str, length_m: float) -> float:
+    """Mass of a member's longitudinal bars — the rebar-tonnage takeoff fact
+    (ADR 0014). The ACI bar table stays behind this adapter. Stirrups are
+    excluded: their run length is a detailing-level takeoff, deferred with the
+    rest of detailing."""
+    from aciconcrete import bar_area
+
+    return float(bar_area(bar, bars)) * _M_PER_IN**2 * length_m * _REBAR_DENSITY_KG_M3
 
 
 def _parse_mix(grade: str) -> float | None:

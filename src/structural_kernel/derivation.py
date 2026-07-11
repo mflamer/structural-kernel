@@ -30,6 +30,8 @@ from typing import Annotated, Final, Literal
 from pydantic import Field
 
 from structural_kernel.decisions import (
+    ConcreteFramingStrategyParams,
+    ConcreteMemberSpec,
     ExceptionParams,
     GravityFramingStrategyParams,
     GridParams,
@@ -45,6 +47,7 @@ from structural_kernel.decisions import (
 from structural_kernel.eids import segment
 from structural_kernel.loads import combos_for
 from structural_kernel.materials import engine_for, families
+from structural_kernel.materials.concrete import section_designation
 from structural_kernel.objects import (
     Decision,
     DecisionKind,
@@ -118,6 +121,21 @@ class Point(KernelModel):
     z: Quantity
 
 
+class ElementReinforcement(KernelModel):
+    """The reinforcement of a *dimensioned* member (ADR 0014) — the member fact a
+    section designation cannot carry, persisted in the authored vocabulary (bar
+    count + designation + cover), tagged units throughout. Catalog members leave
+    it None; the checks and the rebar-mass countable read it."""
+
+    bars: int
+    bar: str  # bar designation, e.g. "#8" — opaque; the family engine resolves it
+    cover: Quantity  # to the tension-steel centroid: d = depth - cover
+    grade: str  # rebar grade, e.g. "Gr60"
+    stirrup_bar: str | None = None
+    stirrup_spacing: Quantity | None = None
+    transverse: Literal["ties", "spirals"] = "ties"
+
+
 class Element(KernelModel):
     eid: Eid
     role: ElementRole
@@ -128,6 +146,9 @@ class Element(KernelModel):
     # 0008). Wood is NDS/ASD; steel is AISC/LRFD. The solve-time checks read it
     # to pick the demand combos (service vs factored) and the engine's method.
     design_method: Literal["ASD", "LRFD"] = "ASD"
+    # Dimensioned members only (ADR 0014): the reinforcement travelling with the
+    # member description; catalog members (wood, steel) leave it None.
+    reinforcement: ElementReinforcement | None = None
     start: Point
     end: Point
     length: Quantity
@@ -281,6 +302,7 @@ class _Member:
     tributary_m: float | None
     grade: str | None = None
     design_method: Literal["ASD", "LRFD"] = "ASD"
+    reinforcement: ElementReinforcement | None = None
     supports: list[str] = field(default_factory=list[str])
     intent: list[IntentInstance] = field(default_factory=list[IntentInstance])
     line_load_by_case: dict[str, float] = field(default_factory=dict[str, float])
@@ -302,11 +324,13 @@ class _FramingContext:
 
 @dataclass(frozen=True)
 class _FramingVocab:
-    """The tier vocabulary a three-tier gravity frame is derived with. Wood and
-    steel share the geometry rule (``_derive_three_tier``) and differ only here:
-    which axis the infill members span, their spacing, the material engine and
-    grade, the design method, and the role/eid-token/section of each of the
-    three tiers (infill → mid → column)."""
+    """The tier vocabulary a three-tier gravity frame is derived with. Wood,
+    steel, and concrete share the geometry rule (``_derive_three_tier``) and
+    differ only here: which axis the infill members span, their spacing, the
+    material engine and grade, the design method, and the role/eid-token/section
+    of each of the three tiers (infill → mid → column). A dimensioned family
+    (concrete, ADR 0014) additionally carries per-tier reinforcement; catalog
+    families leave those None."""
 
     span_axis: Literal["x", "y"]
     spacing_m: float
@@ -322,6 +346,9 @@ class _FramingVocab:
     column_role: ElementRole
     column_token: str
     column_section: str
+    infill_reinforcement: ElementReinforcement | None = None
+    mid_reinforcement: ElementReinforcement | None = None
+    column_reinforcement: ElementReinforcement | None = None
 
 
 @dataclass
@@ -363,6 +390,8 @@ def derive(
             framings.append(_derive_framing(decision, decisions, members))
         elif decision.kind == "steel_framing_strategy":
             _derive_steel_framing(decision, decisions, members)
+        elif decision.kind == "concrete_framing_strategy":
+            _derive_concrete_framing(decision, decisions, members)
     for decision in resolved:
         if decision.kind == "opening":
             _derive_opening(decision, decisions, members, framings)
@@ -387,6 +416,7 @@ def derive(
             section=m.section,
             grade=m.grade,
             design_method=m.design_method,
+            reinforcement=m.reinforcement,
             start=Point(x=_length_m(m.start[0]), y=_length_m(m.start[1]), z=_length_m(m.start[2])),
             end=Point(x=_length_m(m.end[0]), y=_length_m(m.end[1]), z=_length_m(m.end[2])),
             length=_length_m(_dist(m.start, m.end)),
@@ -480,6 +510,56 @@ def _derive_steel_framing(
         column_role="column",
         column_token="col",
         column_section=params.column_section,
+    )
+    _derive_three_tier(decision, decisions, members, params.region, vocab)
+
+
+def _derive_concrete_framing(
+    decision: Decision,
+    decisions: dict[str, Decision],
+    members: dict[str, _Member],
+) -> None:
+    """Cast-in-place concrete gravity framing (ADR 0014): infill beams on
+    girders on columns — the same three-tier geometry as wood and steel,
+    designed ACI/LRFD. The divergence is the member *description*: each tier's
+    section is rendered from its authored (b, h) as a dimensioned designation,
+    and its authored reinforcement travels on the member. Openings do not yet
+    induce over concrete (like steel, a later increment)."""
+    params = parse_params(decision)
+    assert isinstance(params, ConcreteFramingStrategyParams)
+
+    def reinforcement(spec: ConcreteMemberSpec) -> ElementReinforcement:
+        return ElementReinforcement(
+            bars=spec.bars,
+            bar=spec.bar,
+            cover=spec.cover,
+            grade=params.rebar_grade,
+            stirrup_bar=spec.stirrup_bar,
+            stirrup_spacing=spec.stirrup_spacing,
+            transverse=spec.transverse,
+        )
+
+    def designation(spec: ConcreteMemberSpec) -> str:
+        return section_designation(spec.breadth.si_mag, spec.depth.si_mag)
+
+    vocab = _FramingVocab(
+        span_axis=params.beam_axis,
+        spacing_m=params.beam_spacing.si_mag,
+        family=params.member_family,
+        grade=params.concrete_mix,
+        design_method="LRFD",
+        infill_role="beam",
+        infill_token="bm",
+        infill_section=designation(params.beam),
+        mid_role="girder",
+        mid_token="gdr",
+        mid_section=designation(params.girder),
+        column_role="column",
+        column_token="col",
+        column_section=designation(params.column),
+        infill_reinforcement=reinforcement(params.beam),
+        mid_reinforcement=reinforcement(params.girder),
+        column_reinforcement=reinforcement(params.column),
     )
     _derive_three_tier(decision, decisions, members, params.region, vocab)
 
@@ -581,6 +661,7 @@ def _derive_three_tier(
             section=vocab.infill_section,
             grade=vocab.grade,
             design_method=vocab.design_method,
+            reinforcement=vocab.infill_reinforcement,
             start=start,
             end=end,
             tributary_m=tributary,
@@ -610,6 +691,7 @@ def _derive_three_tier(
             section=vocab.mid_section,
             grade=vocab.grade,
             design_method=vocab.design_method,
+            reinforcement=vocab.mid_reinforcement,
             start=start,
             end=end,
             tributary_m=span_m / 2.0,
@@ -637,6 +719,7 @@ def _derive_three_tier(
                     section=vocab.column_section,
                     grade=vocab.grade,
                     design_method=vocab.design_method,
+                    reinforcement=vocab.column_reinforcement,
                     start=(xy[0], xy[1], 0.0),
                     end=(xy[0], xy[1], elevation_m),
                     tributary_m=None,

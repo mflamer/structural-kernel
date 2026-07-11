@@ -103,9 +103,11 @@ def test_cost_basis_has_no_line_refs() -> None:
 def test_cost_factor_over_unknown_quantity_kind_fails_cleanly() -> None:
     # The clean-failure boundary (note 0003): a factor naming a countable no
     # resolver provides is rejected, pointing at the missing kind — never invented.
+    # (This test's original example, formwork_area, became a real derived
+    # countable in ADR 0014 — the note's prediction cashed.)
     with pytest.raises(ValidationError, match="which no derived countable provides"):
         CostFactor(
-            quantity_kind="formwork_area",
+            quantity_kind="glazing_area",
             pricing=DirectPrice(unit_price=Quantity(mag=1.0, unit="USD")),
             source="x",
         )

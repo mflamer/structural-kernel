@@ -140,11 +140,77 @@ def _connection_count(model: DerivedModel, family: str | None, role: str | None)
     )
 
 
+# -- concrete countables (ADR 0014) ---------------------------------------------------
+#
+# Concrete's cost drivers are volume, formwork contact area, and rebar tonnage
+# (note 0006) — derived countables like every other, aggregating what derivation
+# emits (member geometry + the ElementReinforcement on dimensioned members +
+# engine takeoff facts). New driver = new countable + a factor row (note 0003);
+# the cost schema is untouched.
+
+_CONCRETE_FAMILY = "cast_in_place_concrete"
+
+
+def _concrete_volume(model: DerivedModel, family: str | None, role: str | None) -> float:
+    """Placed concrete volume — the trade pricing basis ($/CY), the same engine
+    fact board-feet uses for lumber, scoped to the concrete family."""
+    total = 0.0
+    for element in model.elements:
+        if element.family != _CONCRETE_FAMILY:
+            continue
+        if not _in_scope(element.family, element.role, family, role):
+            continue
+        volume = engine_for(element.family).nominal_volume_m3(
+            element.section, element.length.si_mag
+        )
+        if volume is not None:
+            total += volume
+    return total
+
+
+def _formwork_area(model: DerivedModel, family: str | None, role: str | None) -> float:
+    """Formwork contact area for cast-in-place members (PO call): beams and
+    girders form on three sides (b + 2h — the slab face is not formed), columns
+    on all four (2(b + h))."""
+    total = 0.0
+    for element in model.elements:
+        if element.family != _CONCRETE_FAMILY:
+            continue
+        if not _in_scope(element.family, element.role, family, role):
+            continue
+        section = engine_for(element.family).section_properties(element.section)
+        if section is None:
+            continue
+        b, h = section.breadth_m, section.depth_m
+        contact = 2.0 * (b + h) if element.role == "column" else b + 2.0 * h
+        total += contact * element.length.si_mag
+    return total
+
+
+def _rebar_mass(model: DerivedModel, family: str | None, role: str | None) -> float:
+    """Longitudinal reinforcing steel mass over every dimensioned member that
+    carries reinforcement — derivation emitted it; this only aggregates."""
+    from structural_kernel.materials.concrete import longitudinal_steel_mass_kg
+
+    total = 0.0
+    for element in model.elements:
+        spec = element.reinforcement
+        if spec is None:
+            continue
+        if not _in_scope(element.family, element.role, family, role):
+            continue
+        total += longitudinal_steel_mass_kg(spec.bars, spec.bar, element.length.si_mag)
+    return total
+
+
 for _kind in (
     QuantityKind("member_weight", Dimension.MASS, _member_weight),
     QuantityKind("board_feet", Dimension.VOLUME, _board_feet),
     QuantityKind("piece_count", None, _piece_count),
     QuantityKind("connection_count", None, _connection_count),
     QuantityKind("crane_picks", None, _crane_picks),
+    QuantityKind("concrete_volume", Dimension.VOLUME, _concrete_volume),
+    QuantityKind("formwork_area", Dimension.AREA, _formwork_area),
+    QuantityKind("rebar_mass", Dimension.MASS, _rebar_mass),
 ):
     register_quantity_kind(_kind)

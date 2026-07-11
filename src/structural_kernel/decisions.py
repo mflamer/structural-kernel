@@ -176,6 +176,58 @@ class SteelFramingStrategyParams(KernelModel):
     column_section: Name
 
 
+# -- concrete framing strategy ------------------------------------------------------
+
+
+class ConcreteMemberSpec(KernelModel):
+    """One tier's dimensioned member (ADR 0014): explicit section geometry plus
+    *authored* reinforcement — structured data with tagged units, never a catalog
+    designation and never a string schedule. Single-pass staging (the PO call):
+    the engine *checks* the authored bars against demand; sizing-to-demand is the
+    deferred staged-derivation lift. ``cover`` is measured to the tension-steel
+    centroid, so d = depth - cover (bar-layout detailing stays out of scope)."""
+
+    breadth: LengthQuantity  # b
+    depth: LengthQuantity  # h, overall
+    bars: int = Field(ge=1)  # longitudinal count (tension steel; total for a column)
+    bar: Name  # bar designation, e.g. "#8" — opaque here, resolved by the engine
+    cover: LengthQuantity  # to the tension-steel centroid: d = depth - cover
+    stirrup_bar: Name | None = None  # None = unstirruped (shear on Vc alone)
+    stirrup_spacing: LengthQuantity | None = None
+    transverse: Literal["ties", "spirals"] = "ties"  # column confinement
+
+    @model_validator(mode="after")
+    def _consistent(self) -> ConcreteMemberSpec:
+        if (self.stirrup_bar is None) != (self.stirrup_spacing is None):
+            raise ValueError("stirrup_bar and stirrup_spacing come together or not at all")
+        if self.cover.si_mag >= self.depth.si_mag:
+            raise ValueError("cover must be less than the overall depth")
+        return self
+
+
+class ConcreteFramingStrategyParams(KernelModel):
+    """A three-tier cast-in-place concrete gravity frame (ADR 0014): infill
+    beams → girders → columns, the same geometry rule as wood/steel. The one
+    representational divergence note 0006 demanded be answered explicitly: a
+    concrete member is *described* — section geometry + structured reinforcement
+    per tier — not selected from a catalog. Designed to ACI 318-19 (LRFD-only,
+    strength design); deflection stays the service-level kernel check on the
+    gross-section idealization (Ie refinement deferred)."""
+
+    region: GridRegion
+    system: Literal["beams_on_girders_on_columns"]
+    beam_axis: Literal["x", "y"]  # the axis infill beams span along
+    beam_spacing: LengthQuantity
+    # ADR 0007 registry key, validated against the registered engines — the
+    # dimensioned family registers exactly like the catalog ones (ADR 0014).
+    member_family: MaterialFamily
+    concrete_mix: Name  # the mix designation, e.g. "4000psi" — Ec and density key
+    rebar_grade: Name  # e.g. "Gr60"
+    beam: ConcreteMemberSpec
+    girder: ConcreteMemberSpec
+    column: ConcreteMemberSpec
+
+
 # -- lateral strategy ---------------------------------------------------------------
 
 
@@ -233,6 +285,7 @@ class ExceptionParams(KernelModel):
 _MONEY_DIM_FOR: dict[Dimension | None, Dimension] = {
     Dimension.MASS: Dimension.MONEY_PER_MASS,
     Dimension.VOLUME: Dimension.MONEY_PER_VOLUME,
+    Dimension.AREA: Dimension.MONEY_PER_AREA,  # formwork by contact area (ADR 0014)
     None: Dimension.MONEY,
 }
 
@@ -338,6 +391,7 @@ DecisionParams = (
     | LoadAssumptionsParams
     | GravityFramingStrategyParams
     | SteelFramingStrategyParams
+    | ConcreteFramingStrategyParams
     | LateralStrategyParams
     | OpeningParams
     | ExceptionParams
@@ -366,6 +420,8 @@ def parse_params(decision: Decision) -> DecisionParams | None:
             return GravityFramingStrategyParams.model_validate(payload)
         case "steel_framing_strategy":
             return SteelFramingStrategyParams.model_validate(payload)
+        case "concrete_framing_strategy":
+            return ConcreteFramingStrategyParams.model_validate(payload)
         case "lateral_strategy":
             return LateralStrategyParams.model_validate(payload)
         case "opening":
@@ -383,7 +439,11 @@ def line_refs(params: DecisionParams | None) -> set[str]:
     integrity substrate for ADR 0005 E3 (a referenced line cannot be deleted
     out from under its referrers)."""
     match params:
-        case GravityFramingStrategyParams() | SteelFramingStrategyParams():
+        case (
+            GravityFramingStrategyParams()
+            | SteelFramingStrategyParams()
+            | ConcreteFramingStrategyParams()
+        ):
             region = params.region
             return {region.x_from, region.x_to, region.y_from, region.y_to}
         case LateralStrategyParams():

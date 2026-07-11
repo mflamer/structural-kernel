@@ -38,6 +38,7 @@ class Dimension(StrEnum):
     MONEY = "money"
     MONEY_PER_MASS = "money_per_mass"
     MONEY_PER_VOLUME = "money_per_volume"
+    MONEY_PER_AREA = "money_per_area"  # formwork is priced by contact area (ADR 0014)
     MONEY_PER_TIME = "money_per_time"
 
 
@@ -54,6 +55,7 @@ _KG_PER_LB: Final = 0.45359237  # NIST: the international pound (mass)
 _S_PER_HR: Final = 3600.0
 _S_PER_WEEK: Final = 604800.0  # 7 * 24 * 3600
 _M3_PER_BF: Final = 144.0 * _M_PER_IN**3  # a board-foot is 144 cubic inches (nominal)
+_M3_PER_CY: Final = 27.0 * _M_PER_FT**3  # a cubic yard — concrete's trade volume unit
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +80,7 @@ UNITS: Final[dict[str, UnitDef]] = {
     "in3": UnitDef(Dimension.VOLUME, _M_PER_IN**3),
     "BF": UnitDef(Dimension.VOLUME, _M3_PER_BF),
     "MBF": UnitDef(Dimension.VOLUME, 1e3 * _M3_PER_BF),
+    "CY": UnitDef(Dimension.VOLUME, _M3_PER_CY),
     # second moment of area
     "m4": UnitDef(Dimension.SECOND_MOMENT_OF_AREA, 1.0),
     "in4": UnitDef(Dimension.SECOND_MOMENT_OF_AREA, _M_PER_IN**4),
@@ -116,6 +119,9 @@ UNITS: Final[dict[str, UnitDef]] = {
     "USD/ft3": UnitDef(Dimension.MONEY_PER_VOLUME, 1.0 / _M_PER_FT**3),
     "USD/BF": UnitDef(Dimension.MONEY_PER_VOLUME, 1.0 / _M3_PER_BF),
     "USD/MBF": UnitDef(Dimension.MONEY_PER_VOLUME, 1.0 / (1e3 * _M3_PER_BF)),
+    "USD/CY": UnitDef(Dimension.MONEY_PER_VOLUME, 1.0 / _M3_PER_CY),
+    "USD/m2": UnitDef(Dimension.MONEY_PER_AREA, 1.0),
+    "USD/ft2": UnitDef(Dimension.MONEY_PER_AREA, 1.0 / _M_PER_FT**2),
     "USD/s": UnitDef(Dimension.MONEY_PER_TIME, 1.0),
     "USD/hr": UnitDef(Dimension.MONEY_PER_TIME, 1.0 / _S_PER_HR),
 }
@@ -134,6 +140,7 @@ CANONICAL_SI: Final[dict[Dimension, str]] = {
     Dimension.MONEY: "USD",
     Dimension.MONEY_PER_MASS: "USD/kg",
     Dimension.MONEY_PER_VOLUME: "USD/m3",
+    Dimension.MONEY_PER_AREA: "USD/m2",
     Dimension.MONEY_PER_TIME: "USD/s",
 }
 

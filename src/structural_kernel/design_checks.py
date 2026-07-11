@@ -19,7 +19,12 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
-from structural_kernel.materials import AxialRequest, FlexureRequest, engine_for
+from structural_kernel.materials import (
+    AxialRequest,
+    FlexureRequest,
+    ReinforcementData,
+    engine_for,
+)
 from structural_kernel.objects import Eid, KernelModel
 from structural_kernel.solver import EngineInfo, MemberForces, SolveResult
 from structural_kernel.units import CANONICAL_SI, Quantity
@@ -132,6 +137,24 @@ def run_design_checks(model: DerivedModel, result: SolveResult) -> DesignCheckRe
     )
 
 
+def _reinforcement(element: Element) -> ReinforcementData | None:
+    """A dimensioned member's reinforcement, mapped from the persisted element
+    vocabulary to the engine request vocabulary (ADR 0014). Catalog members
+    carry None and their engines ignore the field — no family dispatch here."""
+    spec = element.reinforcement
+    if spec is None:
+        return None
+    return ReinforcementData(
+        bars=spec.bars,
+        bar=spec.bar,
+        cover_m=spec.cover.si_mag,
+        grade=spec.grade,
+        stirrup_bar=spec.stirrup_bar,
+        stirrup_spacing_m=(None if spec.stirrup_spacing is None else spec.stirrup_spacing.si_mag),
+        transverse=spec.transverse,
+    )
+
+
 def _strength_checks(
     element: Element, combo: str, cases: frozenset[str], forces: MemberForces
 ) -> list[DesignCheck]:
@@ -146,6 +169,7 @@ def _strength_checks(
             method=element.design_method,
             load_cases=cases,
             repetitive=element.role == "joist",
+            reinforcement=_reinforcement(element),
         )
     )
     return [_design_check(element, combo, data, "gravity_load_path") for data in results]
@@ -274,6 +298,7 @@ def _post_checks(
                     unbraced_length_m=length,
                     method=element.design_method,
                     load_cases=frozenset(combo_cases.get(combo_result.combo, set())),
+                    reinforcement=_reinforcement(element),
                 )
             )
             checks.append(_design_check(element, combo_result.combo, data, "gravity_load_path"))
