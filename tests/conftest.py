@@ -140,7 +140,7 @@ def concrete_framing_params() -> ConcreteFramingStrategyParams:
             bar="#6",
             cover=inches(2.5),
             stirrup_bar="#3",
-            stirrup_spacing=inches(7.0),
+            stirrup_spacing=inches(6.0),  # <= d/2 = 6.75 in (ACI 9.7.6.2.2)
         ),
         girder=ConcreteMemberSpec(
             breadth=inches(12.0),
@@ -166,8 +166,11 @@ def usd(value: float, per: str = "USD") -> Quantity:
 
 
 def _material_factors(*, steel_rate_usd_per_lb: float) -> list[CostFactor]:
-    """The two material factors: steel by weight ($/lb), sawn lumber by nominal
-    board-feet ($/BF) — two rows, not two schema fields (note 0003)."""
+    """The material factors: steel by weight ($/lb), sawn lumber by nominal
+    board-feet ($/BF), placed concrete by volume ($/CY), and rebar by weight
+    ($/lb) — rows, not schema fields (note 0003; ADR 0014 added the concrete
+    rows as data). On a model with no concrete the concrete rows resolve to
+    zero — one regional basis prices every family."""
     return [
         CostFactor(
             quantity_kind="member_weight",
@@ -180,6 +183,16 @@ def _material_factors(*, steel_rate_usd_per_lb: float) -> list[CostFactor]:
             scope=FactorScope(family="sawn_lumber"),
             pricing=DirectPrice(unit_price=usd(2.50, "USD/BF")),
             source="regional table, Mar 2026",
+        ),
+        CostFactor(
+            quantity_kind="concrete_volume",
+            pricing=DirectPrice(unit_price=usd(185.0, "USD/CY")),
+            source="ready-mix, placed — illustrative",
+        ),
+        CostFactor(
+            quantity_kind="rebar_mass",
+            pricing=DirectPrice(unit_price=usd(1.10, "USD/lb")),
+            source="rebar furnished + placed — illustrative",
         ),
     ]
 
@@ -198,6 +211,13 @@ def cost_basis_params(
                 quantity_kind="connection_count",
                 pricing=DirectPrice(unit_price=usd(85.0)),
                 source="assembly assumption",
+            ),
+            # Formwork is a means-and-methods (installation) cost — an AREA-
+            # dimensioned row over the derived contact-area countable (ADR 0014).
+            CostFactor(
+                quantity_kind="formwork_area",
+                pricing=DirectPrice(unit_price=usd(8.0, "USD/ft2")),
+                source="forming assumption — illustrative",
             ),
             CostFactor(
                 quantity_kind="piece_count",
