@@ -57,10 +57,29 @@ class MemberCheckData:
 
 
 @dataclass(frozen=True, slots=True)
+class ReinforcementData:
+    """Reinforcement for a *dimensioned* (non-catalog) member — the one
+    member-description fact a designation string cannot carry (ADR 0014, the
+    note-0006 boundary finding: the request vocabulary was catalog-shaped and
+    needed exactly this additive extension). Catalog engines ignore it; a
+    dimensioned family requires it on its check requests. Fields are the
+    *authored* vocabulary — bar count + designation + cover — and the family
+    engine resolves areas and depths (bar tables stay behind the adapter)."""
+
+    bars: int  # longitudinal count (tension steel for flexure; total for axial)
+    bar: str  # bar designation resolved by the family engine (e.g. "#8")
+    cover_m: float  # to the tension-steel centroid: d = depth - cover (PO call)
+    grade: str = "Gr60"
+    stirrup_bar: str | None = None  # None = unstirruped (Av = 0)
+    stirrup_spacing_m: float | None = None
+    transverse: Literal["ties", "spirals"] = "ties"
+
+
+@dataclass(frozen=True, slots=True)
 class FlexureRequest:
     """Verify a member as a flexural member. Neutral fields; each engine reads
     the ones its code uses (wood: load_cases→duration, repetitive→Cr; steel:
-    unbraced_length→Lb, cb; concrete ignores both)."""
+    unbraced_length→Lb, cb; concrete: reinforcement, ignoring both)."""
 
     designation: str
     grade: str
@@ -73,6 +92,7 @@ class FlexureRequest:
     load_cases: frozenset[str] = field(default_factory=frozenset[str])
     repetitive: bool = False
     cb: float = 1.0
+    reinforcement: ReinforcementData | None = None  # dimensioned families only
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,14 +106,17 @@ class AxialRequest:
     unbraced_length_m: float = 0.0
     method: Method = "ASD"
     load_cases: frozenset[str] = field(default_factory=frozenset[str])
+    reinforcement: ReinforcementData | None = None  # dimensioned families only
 
 
 class MaterialEngine(Protocol):
-    """A verified code library adapted to the kernel. Fits catalog-section
-    materials (wood, steel). Concrete's dimensional-plus-reinforced members
-    need the richer decision kinds of phase 2 and are not a catalog engine
-    (ADR 0007) — but the same ``MemberCheckData`` vocabulary still carries
-    their results."""
+    """A verified code library adapted to the kernel. Catalog materials (wood,
+    steel) resolve a designation against a published table; a *dimensioned*
+    family (cast-in-place concrete, ADR 0014) serves the same protocol from a
+    systematic designation — "304.8x609.6" is parseable b-by-h geometry — with
+    reinforcement (the fact a designation cannot carry) travelling on the check
+    requests. The ``MemberCheckData`` vocabulary is unchanged either way — the
+    ADR 0007 boundary, confirmed under a real concrete decision kind."""
 
     @property
     def family(self) -> str: ...
@@ -113,8 +136,9 @@ class MaterialEngine(Protocol):
     # trade quotes. `None` means "this family is not priced this way".
 
     def nominal_volume_m3(self, designation: str, length_m: float) -> float | None:
-        """The board-foot (nominal) volume of one member — lumber's trade
-        pricing basis. Steel, priced by weight, returns None."""
+        """The nominal volume of one member, where volume is the family's trade
+        pricing basis — lumber's board-feet, concrete's placed volume. Steel,
+        priced by weight, returns None."""
         ...
 
     def crane_picks_per_member(self) -> int:

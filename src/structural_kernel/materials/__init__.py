@@ -16,6 +16,7 @@ from structural_kernel.materials.base import (
     MaterialEngine,
     MemberCheckData,
     ProvisionFactor,
+    ReinforcementData,
     SectionProperties,
 )
 from structural_kernel.materials.registry import ENGINES, engine_for, families
@@ -27,6 +28,7 @@ __all__ = [
     "MaterialEngine",
     "MemberCheckData",
     "ProvisionFactor",
+    "ReinforcementData",
     "SectionProperties",
     "engine_for",
     "families",
